@@ -12,6 +12,7 @@ It provides:
 - per-indexer HTTP client helpers (`httpclient`)
 - login flows (`login`)
 - a library-local normalized release model (`release`)
+- shared HTTP utilities (`internal/httputil`)
 
 ## Installation
 
@@ -19,7 +20,7 @@ It provides:
 go get github.com/Kcchouette/cardigann-go
 ```
 
-Requires Go 1.23+.
+Requires Go 1.21+.
 
 ## Usage
 
@@ -55,6 +56,11 @@ func main() {
     }
 }
 ```
+
+## Breaking changes (v0.2.0)
+
+- `CookiePersister` interface: methods renamed from `LoadCookies`/`SaveCookies` to `Load`/`Store`
+- `Provider` struct fields (`Def`, `BaseURL`, `Config`, `HTTPClient`, `Client`) are now unexported. Use `Provider.Def()` accessor for definition access.
 
 ## Supported features
 

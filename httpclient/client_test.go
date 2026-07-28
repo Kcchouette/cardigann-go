@@ -17,16 +17,16 @@ type memPersister struct {
 
 func newMemPersister() *memPersister { return &memPersister{store: make(map[string]string)} }
 
-func (p *memPersister) LoadCookies(indexerID string) (string, error) {
+func (p *memPersister) Load(indexerID string) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.store[indexerID], nil
 }
 
-func (p *memPersister) SaveCookies(indexerID string, cookieJSON string) error {
+func (p *memPersister) Store(indexerID string, data string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.store[indexerID] = cookieJSON
+	p.store[indexerID] = data
 	return nil
 }
 

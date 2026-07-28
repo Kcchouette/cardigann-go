@@ -10,13 +10,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
 	"github.com/Kcchouette/cardigann-go/httpclient"
+	"github.com/Kcchouette/cardigann-go/internal/httputil"
 	"github.com/Kcchouette/cardigann-go/login"
 	"github.com/Kcchouette/cardigann-go/release"
 	"github.com/Kcchouette/cardigann-go/selector"
@@ -24,6 +24,11 @@ import (
 	"github.com/Kcchouette/cardigann-go/template/filters"
 	"golang.org/x/time/rate"
 )
+
+// HTTPDoer est l'abstraction pour les clients HTTP.
+type HTTPDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
 
 // Query représente une recherche Cardigann générique.
 type Query struct {
@@ -42,16 +47,16 @@ type Query struct {
 
 // Provider exécute une IndexerDefinition Cardigann comme fournisseur de recherche.
 type Provider struct {
-	Def        cmodel.IndexerDefinition
-	BaseURL    string
-	Config     map[string]string
-	HTTPClient *http.Client
+	def        cmodel.IndexerDefinition
+	baseURL    string
+	config     map[string]string
+	httpCl     *http.Client
 
-	// Client, si renseigné, est utilisé à la place de HTTPClient : il fournit
+	// client, si renseigné, est utilisé à la place de httpCl : il fournit
 	// cookies persistés (SQLite), rate limiting et retries (Slice C). Le login
 	// (si def.Login.Method != "") est déclenché une seule fois, avant la
 	// première requête de recherche.
-	Client *httpclient.IndexerClient
+	client *httpclient.IndexerClient
 
 	loginOnce    sync.Once
 	loginErr     error
@@ -59,15 +64,18 @@ type Provider struct {
 	limiter      *rate.Limiter
 }
 
+// Def retourne une copie de la définition de l'indexeur.
+func (p *Provider) Def() cmodel.IndexerDefinition { return p.def }
+
 // NewProvider construit un Provider Cardigann prêt à l'emploi, sans gestion
 // de session/login (utile pour les indexeurs publics ou les tests).
 // Si def.RequestDelay > 0, un rate limiter est créé pour espacer les requêtes.
 func NewProvider(def cmodel.IndexerDefinition, baseURL string, config map[string]string) *Provider {
 	p := &Provider{
-		Def:        def,
-		BaseURL:    baseURL,
-		Config:     config,
-		HTTPClient: &http.Client{Timeout: 20 * time.Second},
+		def:    def,
+		baseURL: baseURL,
+		config: config,
+		httpCl: &http.Client{Timeout: 20 * time.Second},
 	}
 	if def.RequestDelay > 0 {
 		p.limiter = rate.NewLimiter(rate.Every(time.Duration(def.RequestDelay*float64(time.Second))), 1)
@@ -80,18 +88,18 @@ func NewProvider(def cmodel.IndexerDefinition, baseURL string, config map[string
 // effectuant le login défini par def.Login avant la première recherche.
 func NewAuthenticatedProvider(def cmodel.IndexerDefinition, baseURL string, config map[string]string, client *httpclient.IndexerClient) *Provider {
 	return &Provider{
-		Def:     def,
-		BaseURL: baseURL,
-		Config:  config,
-		Client:  client,
+		def:     def,
+		baseURL: baseURL,
+		config:  config,
+		client:  client,
 	}
 }
 
-func (p *Provider) ID() string   { return p.Def.ID }
-func (p *Provider) Name() string { return p.Def.Name }
+func (p *Provider) ID() string   { return p.def.ID }
+func (p *Provider) Name() string { return p.def.Name }
 
 func (p *Provider) Protocol() release.Protocol {
-	if p.Def.IsUsenet() {
+	if p.def.IsUsenet() {
 		return release.ProtocolUsenet
 	}
 	return release.ProtocolTorrent
@@ -100,33 +108,31 @@ func (p *Provider) Protocol() release.Protocol {
 // httpClient retourne le client HTTP effectif (IndexerClient prioritaire),
 // après avoir garanti que le login (le cas échéant) a été effectué une fois.
 // Si un rate limiter est configuré (via RequestDelay), la requête est espacée.
-func (p *Provider) httpClient(ctx context.Context) (interface {
-	Do(*http.Request) (*http.Response, error)
-}, error) {
-	if p.Client == nil {
+func (p *Provider) httpClient(ctx context.Context) (HTTPDoer, error) {
+	if p.client == nil {
 		if p.limiter != nil {
 			if err := p.limiter.Wait(ctx); err != nil {
 				return nil, fmt.Errorf("rate limiter: %w", err)
 			}
 		}
-		return p.HTTPClient, nil
+		return p.httpCl, nil
 	}
 	p.loginOnce.Do(func() {
-		if p.Def.Login.Method == "" || p.Def.Login.Method == "none" {
+		if p.def.Login.Method == "" || p.def.Login.Method == "none" {
 			return
 		}
-		p.loginErr = login.Login(ctx, p.Client.HTTPClient(), p.Def, p.BaseURL, p.Config)
+		p.loginErr = login.Login(ctx, p.client.HTTPClient(), p.def, p.baseURL, p.config)
 	})
 	if p.loginErr != nil {
 		return nil, fmt.Errorf("login: %w", p.loginErr)
 	}
-	return p.Client, nil
+	return p.client, nil
 }
 
 // Search exécute la recherche pour tous les search.paths de la définition.
 func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, error) {
 	keywords := q.Keywords
-	for _, step := range p.Def.Search.KeywordsFilters {
+	for _, step := range p.def.Search.KeywordsFilters {
 		var err error
 		keywords, err = filters.Apply(keywords, []filters.Step{{Name: step.Name, Args: step.Args}})
 		if err != nil {
@@ -136,22 +142,22 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 	p.lastKeywords = keywords
 
 	// Map Newznab category IDs to native tracker category IDs.
-	mappedCategories := mapCategories(q.Categories, p.Def.Caps.CategoryMappings)
+	mappedCategories := mapCategories(q.Categories, p.def.Caps.CategoryMappings)
 
 	// Populate config with default values from definition if not already set
 	// Note: "false" est truthy dans les templates Go, donc on l'exclut du Config
 	// pour que {{ if .Config.freeleech }} fonctionne correctement.
-	if p.Config == nil {
-		p.Config = make(map[string]string)
+	if p.config == nil {
+		p.config = make(map[string]string)
 	}
-	for _, setting := range p.Def.Settings {
-		if _, exists := p.Config[setting.Name]; !exists && setting.Default != "" && setting.Default != "false" {
-			p.Config[setting.Name] = setting.Default
+	for _, setting := range p.def.Settings {
+		if _, exists := p.config[setting.Name]; !exists && setting.Default != "" && setting.Default != "false" {
+			p.config[setting.Name] = setting.Default
 		}
 	}
 
 	rctx := tmpl.Context{
-		Config:     p.Config,
+		Config:     p.config,
 		Keywords:   keywords,
 		Categories: mappedCategories,
 		Query: map[string]string{
@@ -173,7 +179,7 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 	}
 
 	var all []release.Release
-	for _, path := range p.Def.Search.Paths {
+	for _, path := range p.def.Search.Paths {
 		// Skip paths whose Categories list has no intersection with requested categories.
 		if len(path.Categories) > 0 && !categoriesIntersect(path.Categories, q.Categories) {
 			continue
@@ -243,14 +249,7 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 		return nil, fmt.Errorf("rendering path: %w", err)
 	}
 
-	// Si le path rendu est déjà une URL complète (commence par http:// ou https://),
-	// ne pas préfixer par BaseURL.
-	var fullURL string
-	if strings.HasPrefix(renderedPath, "http://") || strings.HasPrefix(renderedPath, "https://") {
-		fullURL = renderedPath
-	} else {
-		fullURL = strings.TrimRight(p.BaseURL, "/") + "/" + strings.TrimLeft(renderedPath, "/")
-	}
+	fullURL := httputil.ResolveURL(p.baseURL, renderedPath)
 
 	method := strings.ToUpper(path.Method)
 	if method == "" {
@@ -260,50 +259,21 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 	// Utiliser les inputs du path, ou fallback sur les inputs du search
 	inputs := path.Inputs
 	if len(inputs) == 0 {
-		inputs = p.Def.Search.Inputs
+		inputs = p.def.Search.Inputs
 	}
 
-	// Séparer les paramètres $raw des inputs normaux
-	var rawParams string
-	normalInputs := make(map[string]string)
-	for k, v := range inputs {
-		if k == "$raw" {
-			rendered, err := tmpl.Render(v, rctx)
-			if err != nil {
-				return nil, fmt.Errorf("rendering $raw: %w", err)
-			}
-			rawParams = rendered
-		} else {
-			normalInputs[k] = v
-		}
+	// Rendre les inputs et séparer $raw
+	rendered, rawParams, err := renderInputs(inputs, rctx)
+	if err != nil {
+		return nil, err
 	}
+
+	// Construire la requête avec filtrage des valeurs vides/"false"
+	values := filterInputs(rendered)
+	appendRawParams(values, rawParams)
 
 	var req *http.Request
 	if method == http.MethodPost {
-		values := url.Values{}
-		for k, v := range normalInputs {
-			rendered, err := tmpl.Render(v, rctx)
-			if err != nil {
-				return nil, fmt.Errorf("rendering input %q: %w", k, err)
-			}
-			// Ignorer les paramètres vides ou "false" (évite les erreurs 400 sur certaines APIs)
-			// Note: "false" est truthy dans les templates Go, mais les APIs attendent pas de paramètre
-			if rendered != "" && rendered != "false" {
-				values.Set(k, rendered)
-			}
-		}
-		// Ajouter les paramètres $raw
-		if rawParams != "" {
-			for _, param := range strings.Split(rawParams, "&") {
-				if param == "" {
-					continue
-				}
-				parts := strings.SplitN(param, "=", 2)
-				if len(parts) == 2 {
-					values.Add(parts[0], parts[1])
-				}
-			}
-		}
 		req, err = http.NewRequestWithContext(ctx, method, fullURL, strings.NewReader(values.Encode()))
 		if err != nil {
 			return nil, err
@@ -314,31 +284,12 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 		if err != nil {
 			return nil, fmt.Errorf("invalid url %q: %w", fullURL, err)
 		}
-		values := u.Query()
-		for k, v := range normalInputs {
-			rendered, err := tmpl.Render(v, rctx)
-			if err != nil {
-				return nil, fmt.Errorf("rendering input %q: %w", k, err)
-			}
-			// Ignorer les paramètres vides ou "false" (évite les erreurs 400 sur certaines APIs)
-			// Note: "false" est truthy dans les templates Go, mais les APIs attendent pas de paramètre
-			if rendered != "" && rendered != "false" {
-				values.Set(k, rendered)
-			}
+		// Merge existing query params from the URL with new values
+		existingValues := u.Query()
+		for k, v := range values {
+			existingValues[k] = v
 		}
-		// Ajouter les paramètres $raw
-		if rawParams != "" {
-			for _, param := range strings.Split(rawParams, "&") {
-				if param == "" {
-					continue
-				}
-				parts := strings.SplitN(param, "=", 2)
-				if len(parts) == 2 {
-					values.Add(parts[0], parts[1])
-				}
-			}
-		}
-		u.RawQuery = values.Encode()
+		u.RawQuery = existingValues.Encode()
 		req, err = http.NewRequestWithContext(ctx, method, u.String(), nil)
 		if err != nil {
 			return nil, err
@@ -346,7 +297,7 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 	}
 
 	// Appliquer les headers de la définition (ex: Authorization: Bearer {{ .Config.apikey }})
-	for header, vals := range p.Def.Search.Headers {
+	for header, vals := range p.def.Search.Headers {
 		for _, v := range vals {
 			rendered, err := tmpl.Render(v, rctx)
 			if err != nil {
@@ -375,546 +326,9 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 		return nil, fmt.Errorf("http status %d", resp.StatusCode)
 	}
 
-	if err := selector.CheckErrors(string(body), p.Def.Search.Error); err != nil {
+	if err := selector.CheckErrors(string(body), p.def.Search.Error); err != nil {
 		return nil, fmt.Errorf("search error: %w", err)
 	}
 
 	return p.parseResults(ctx, string(body), path.Response.Type, rctx)
-}
-
-func (p *Provider) parseResults(ctx context.Context, body string, responseType string, rctx tmpl.Context) ([]release.Release, error) {
-	var doc selector.Document
-	var err error
-	switch responseType {
-	case "json":
-		doc, err = selector.NewJSONDocument(body)
-	case "xml":
-		doc, err = selector.NewXMLDocument(body)
-	default:
-		doc, err = selector.NewHTMLDocument(body)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("parsing response body: %w", err)
-	}
-
-	rows, err := doc.Find(p.Def.Search.Rows.Selector)
-	if err != nil {
-		return nil, fmt.Errorf("selecting rows: %w", err)
-	}
-	if p.Def.Search.Rows.After > 0 && p.Def.Search.Rows.After < len(rows) {
-		rows = rows[p.Def.Search.Rows.After:]
-	}
-
-	// Apply row-level filters (e.g. andmatch) before field extraction.
-	if len(p.Def.Search.Rows.Filters) > 0 {
-		keywords := p.lastKeywords
-		filtered := rows[:0]
-		for _, row := range rows {
-			text := row.Text()
-			passed := true
-			for _, f := range p.Def.Search.Rows.Filters {
-				if f.Name == "andmatch" {
-					if !filters.ApplyAndMatch(text, keywords) {
-						passed = false
-						break
-					}
-					continue
-				}
-				result, err := filters.Apply(text, []filters.Step{{Name: f.Name, Args: f.Args}})
-				if err != nil || result == "" {
-					passed = false
-					break
-				}
-				text = result
-			}
-			if passed {
-				filtered = append(filtered, row)
-			}
-		}
-		rows = filtered
-	}
-
-	releases := make([]release.Release, 0, len(rows))
-	var extractErr error
-	for _, row := range rows {
-		release, err := p.extractRelease(ctx, row, rctx)
-		if err != nil {
-			if extractErr == nil {
-				extractErr = err
-			}
-			continue
-		}
-		release.IndexerID = p.Def.ID
-		release.IndexerName = p.Def.Name
-		release.Protocol = p.Protocol()
-		releases = append(releases, release)
-	}
-	if len(releases) == 0 && extractErr != nil {
-		return nil, fmt.Errorf("no releases extracted (last error: %w)", extractErr)
-	}
-	return releases, nil
-}
-
-func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx tmpl.Context) (release.Release, error) {
-	values := make(map[string]string, len(p.Def.Search.Fields))
-
-	// Extraire les champs en plusieurs passes pour gérer les dépendances
-	// (ex: title_phase2 dépend de title_phase1).
-	// On continue tant qu'on fait du progrès.
-	if rctx.Result == nil {
-		rctx.Result = make(map[string]string)
-	}
-
-	for pass := 0; pass < 10; pass++ { // Max 10 passes
-		progress := false
-		for name, field := range p.Def.Search.Fields {
-			// Si le champ est déjà extrait, on le saute
-			if _, done := values[name]; done {
-				continue
-			}
-			if pass == 0 {
-			}
-			
-			var raw string
-			var ok bool
-			target := row
-
-			if field.Selector != "" {
-				if sub, isSub := row.(selector.SubSelectable); isSub {
-					nodes, err := sub.Find(field.Selector)
-					if err != nil || len(nodes) == 0 {
-						if field.Optional {
-							values[name] = ""
-							rctx.Result[name] = ""
-							progress = true
-							continue
-						}
-						// Champ requis non trouvé, on le garde pour la prochaine passe
-						continue
-					}
-					target = nodes[0]
-				}
-			}
-
-			if field.Text != "" {
-				// Rendre le template avec le contexte (Result, Config, etc.)
-				rendered, err := tmpl.Render(field.Text, rctx)
-				if err != nil {
-					if field.Optional {
-						values[name] = ""
-						rctx.Result[name] = ""
-						progress = true
-						continue
-					}
-					// Template non résolu, on le garde pour la prochaine passe
-					continue
-				}
-				// Vérifier si le rendu contient encore des placeholders non résolus
-				if strings.Contains(rendered, "<no value>") || strings.Contains(rendered, "{{") {
-					continue
-				}
-				raw = rendered
-				ok = true
-			} else if field.Attribute != "" {
-				raw, ok = target.Attr(field.Attribute)
-			} else {
-				raw = target.Text()
-				ok = raw != ""
-			}
-
-			if !ok {
-				if field.Optional {
-					values[name] = ""
-					rctx.Result[name] = ""
-					progress = true
-					continue
-				}
-				// Champ requis manquant, on le garde pour la prochaine passe
-				continue
-			}
-
-			filtered, err := filters.Apply(raw, toFilterSteps(field.Filters))
-			if err != nil {
-				if field.Optional {
-					values[name] = ""
-					rctx.Result[name] = ""
-					progress = true
-					continue
-				}
-				// Filtre échoué, on le garde pour la prochaine passe
-				continue
-			}
-			values[name] = filtered
-			rctx.Result[name] = filtered
-			progress = true
-		}
-		
-		if !progress {
-			// Aucun progrès, on arrête
-			break
-		}
-	}
-
-	rel, err := fieldsToRelease(values)
-	if err != nil {
-		return release.Release{}, err
-	}
-
-	// Resolve download link via download block if defined
-	if p.Def.Download != nil {
-		client, clientErr := p.httpClient(ctx)
-		if clientErr == nil {
-			dlResult, dlErr := p.resolveDownload(ctx, client, row, p.BaseURL, rctx)
-			if dlErr == nil && dlResult != nil {
-				if dlResult.URL != "" {
-					rel.DownloadLink = dlResult.URL
-				}
-				if dlResult.InfoHash != "" {
-					rel.InfoHash = dlResult.InfoHash
-				}
-				if dlResult.Title != "" {
-					rel.Title = dlResult.Title
-				}
-			}
-		}
-		// If resolveDownload fails, fall back to the raw field value already in rel.DownloadLink
-	}
-
-	return rel, nil
-}
-
-func toFilterSteps(steps []cmodel.FilterStep) []filters.Step {
-	out := make([]filters.Step, len(steps))
-	for i, s := range steps {
-		out[i] = filters.Step{Name: s.Name, Args: s.Args}
-	}
-	return out
-}
-
-func fieldsToRelease(values map[string]string) (release.Release, error) {
-	release := release.Release{
-		Title:        values["title"],
-		Details:      values["details"],
-		DownloadLink: values["download"],
-		InfoHash:     values["infohash"],
-	}
-	if release.Title == "" {
-		return release, fmt.Errorf("title is required")
-	}
-	if v, ok := values["size"]; ok {
-		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
-			release.Size = parsed
-		}
-	}
-	if v, ok := values["seeders"]; ok {
-		if parsed, err := strconv.Atoi(v); err == nil {
-			release.Seeders = parsed
-		}
-	}
-	if v, ok := values["peers"]; ok {
-		if parsed, err := strconv.Atoi(v); err == nil {
-			release.Peers = parsed
-		}
-	}
-	if v, ok := values["date"]; ok {
-		if parsed, err := time.Parse(time.RFC3339, v); err == nil {
-			release.PublishDate = parsed
-		}
-	}
-	return release, nil
-}
-
-// downloadResult holds the resolved download information.
-type downloadResult struct {
-	URL      string
-	InfoHash string
-	Title    string
-}
-
-// resolveDownload résout le lien réel de téléchargement à partir de la définition
-// download de la ligne. Si aucun download n'est défini, retourne nil.
-func (p *Provider) resolveDownload(ctx context.Context, client interface {
-	Do(*http.Request) (*http.Response, error)
-}, row selector.Node, baseURL string, rctx tmpl.Context) (*downloadResult, error) {
-	dl := p.Def.Download
-	if dl == nil {
-		return nil, nil
-	}
-
-	var beforeResponse string
-	var downloadURL string
-
-	if dl.Before != nil {
-		var beforeURL string
-		if dl.Before.PathSelector != nil {
-			extracted, err := extractSelectorField(row, dl.Before.PathSelector)
-			if err != nil {
-				return nil, fmt.Errorf("before pathselector: %w", err)
-			}
-			if strings.HasPrefix(extracted, "http://") || strings.HasPrefix(extracted, "https://") {
-				beforeURL = extracted
-			} else {
-				beforeURL = strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(extracted, "/")
-			}
-		} else if dl.Before.Path != "" {
-			rendered, err := tmpl.Render(dl.Before.Path, rctx)
-			if err != nil {
-				return nil, fmt.Errorf("rendering before path: %w", err)
-			}
-			if strings.HasPrefix(rendered, "http://") || strings.HasPrefix(rendered, "https://") {
-				beforeURL = rendered
-			} else {
-				beforeURL = strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(rendered, "/")
-			}
-		}
-
-		if beforeURL != "" {
-			method := strings.ToUpper(dl.Before.Method)
-			if method == "" {
-				method = http.MethodGet
-			}
-
-			var req *http.Request
-			if method == http.MethodPost {
-				values := url.Values{}
-				for k, v := range dl.Before.Inputs {
-					rendered, err := tmpl.Render(v, rctx)
-					if err != nil {
-						return nil, fmt.Errorf("rendering before input %q: %w", k, err)
-					}
-					values.Set(k, rendered)
-				}
-				var err error
-				req, err = http.NewRequestWithContext(ctx, method, beforeURL, strings.NewReader(values.Encode()))
-				if err != nil {
-					return nil, fmt.Errorf("creating before request: %w", err)
-				}
-				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			} else {
-				u, err := url.Parse(beforeURL)
-				if err != nil {
-					return nil, fmt.Errorf("invalid before url %q: %w", beforeURL, err)
-				}
-				values := u.Query()
-				for k, v := range dl.Before.Inputs {
-					rendered, err := tmpl.Render(v, rctx)
-					if err != nil {
-						return nil, fmt.Errorf("rendering before input %q: %w", k, err)
-					}
-					values.Set(k, rendered)
-				}
-				u.RawQuery = values.Encode()
-				req, err = http.NewRequestWithContext(ctx, method, u.String(), nil)
-				if err != nil {
-					return nil, fmt.Errorf("creating before request: %w", err)
-				}
-			}
-
-			if dl.Headers != nil {
-				for header, vals := range dl.Headers {
-					for _, v := range vals {
-						req.Header.Add(header, v)
-					}
-				}
-			}
-
-			resp, err := client.Do(req)
-			if err != nil {
-				return nil, fmt.Errorf("before request: %w", err)
-			}
-			defer resp.Body.Close()
-
-			body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
-			if err != nil {
-				return nil, fmt.Errorf("reading before response: %w", err)
-			}
-			if resp.StatusCode != http.StatusOK {
-				return nil, fmt.Errorf("before request status %d", resp.StatusCode)
-			}
-			beforeResponse = string(body)
-		}
-	}
-
-	// Extract download URL from selectors
-	if len(dl.Selectors) > 0 {
-		for _, sel := range dl.Selectors {
-			if sel.UseBeforeResponse && beforeResponse != "" {
-				doc, err := selector.NewHTMLDocument(beforeResponse)
-				if err != nil {
-					return nil, fmt.Errorf("parsing before response: %w", err)
-				}
-				nodes, err := doc.Find(sel.Selector)
-				if err != nil || len(nodes) == 0 {
-					return nil, fmt.Errorf("before response selector %q matched nothing", sel.Selector)
-				}
-				target := nodes[0]
-				if sel.Attribute != "" {
-					raw, ok := target.Attr(sel.Attribute)
-					if !ok {
-						return nil, fmt.Errorf("before response attribute %q not found", sel.Attribute)
-					}
-					downloadURL = raw
-				} else {
-					downloadURL = target.Text()
-				}
-			} else {
-				extracted, err := extractSelectorFromNode(row, sel.Selector, sel.Attribute)
-				if err != nil {
-					return nil, fmt.Errorf("selector %q: %w", sel.Selector, err)
-				}
-				downloadURL = extracted
-			}
-
-			if len(sel.Filters) > 0 {
-				filtered, err := filters.Apply(downloadURL, toFilterSteps(sel.Filters))
-				if err != nil {
-					return nil, fmt.Errorf("applying filters to selector: %w", err)
-				}
-				downloadURL = filtered
-			}
-
-			if downloadURL != "" {
-				break
-			}
-		}
-	} else if beforeResponse != "" {
-		doc, err := selector.NewHTMLDocument(beforeResponse)
-		if err == nil {
-			for _, sel := range []string{"a[href*='download']", "a[href*='torrent']", "a[href*='.torrent']"} {
-				nodes, err := doc.Find(sel)
-				if err == nil && len(nodes) > 0 {
-					if href, ok := nodes[0].Attr("href"); ok {
-						downloadURL = href
-						break
-					}
-				}
-			}
-		}
-	}
-
-	result := &downloadResult{URL: downloadURL}
-
-	// Handle infohash extraction
-	if dl.Infohash != nil {
-		var infohashSource selector.Node
-		if dl.Infohash.UseBeforeResponse && beforeResponse != "" {
-			doc, err := selector.NewHTMLDocument(beforeResponse)
-			if err != nil {
-				return nil, fmt.Errorf("parsing before response for infohash: %w", err)
-			}
-			nodes, err := doc.Find(dl.Infohash.Hash.Selector)
-			if err != nil || len(nodes) == 0 {
-				return nil, fmt.Errorf("infohash hash selector %q matched nothing", dl.Infohash.Hash.Selector)
-			}
-			infohashSource = nodes[0]
-		} else {
-			infohashSource = row
-		}
-
-		hash, err := extractSelectorField(infohashSource, &dl.Infohash.Hash)
-		if err != nil {
-			return nil, fmt.Errorf("infohash hash: %w", err)
-		}
-		result.InfoHash = hash
-
-		if dl.Infohash.Title.Selector != "" {
-			title, err := extractSelectorField(infohashSource, &dl.Infohash.Title)
-			if err == nil && title != "" {
-				result.Title = title
-			}
-		}
-	}
-
-	// If no URL found, check if the before-response is a redirect URL
-	if downloadURL == "" && beforeResponse != "" {
-		trimmed := strings.TrimSpace(beforeResponse)
-		if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
-			result.URL = trimmed
-		}
-	}
-
-	return result, nil
-}
-
-// extractSelectorField extrait une valeur d'un noeud en utilisant un SelectorField.
-func extractSelectorField(node selector.Node, sf *cmodel.SelectorField) (string, error) {
-	if sf == nil {
-		return "", nil
-	}
-
-	if sf.Text != "" {
-		raw := sf.Text
-		filtered, err := filters.Apply(raw, toFilterSteps(sf.Filters))
-		if err != nil {
-			return "", fmt.Errorf("applying filters: %w", err)
-		}
-		return filtered, nil
-	}
-
-	if sf.Selector == "" {
-		return "", nil
-	}
-
-	sub, isSub := node.(selector.SubSelectable)
-	if !isSub {
-		return "", fmt.Errorf("node does not support Find")
-	}
-
-	nodes, err := sub.Find(sf.Selector)
-	if err != nil {
-		return "", fmt.Errorf("selector %q: %w", sf.Selector, err)
-	}
-	if len(nodes) == 0 {
-		if sf.Optional {
-			return "", nil
-		}
-		return "", fmt.Errorf("selector %q matched nothing", sf.Selector)
-	}
-
-	target := nodes[0]
-	var raw string
-	var ok bool
-	if sf.Attribute != "" {
-		raw, ok = target.Attr(sf.Attribute)
-		if !ok {
-			if sf.Optional {
-				return "", nil
-			}
-			return "", fmt.Errorf("attribute %q not found", sf.Attribute)
-		}
-	} else {
-		raw = target.Text()
-	}
-
-	filtered, err := filters.Apply(raw, toFilterSteps(sf.Filters))
-	if err != nil {
-		return "", fmt.Errorf("applying filters: %w", err)
-	}
-	return filtered, nil
-}
-
-// extractSelectorFromNode extrait une valeur d'un noeud en utilisant un sélecteur et un attribut.
-func extractSelectorFromNode(node selector.Node, selectorStr, attribute string) (string, error) {
-	sub, isSub := node.(selector.SubSelectable)
-	if !isSub {
-		return "", fmt.Errorf("node does not support Find")
-	}
-
-	nodes, err := sub.Find(selectorStr)
-	if err != nil {
-		return "", fmt.Errorf("selector %q: %w", selectorStr, err)
-	}
-	if len(nodes) == 0 {
-		return "", fmt.Errorf("selector %q matched nothing", selectorStr)
-	}
-
-	target := nodes[0]
-	if attribute != "" {
-		raw, ok := target.Attr(attribute)
-		if !ok {
-			return "", fmt.Errorf("attribute %q not found", attribute)
-		}
-		return raw, nil
-	}
-	return target.Text(), nil
 }

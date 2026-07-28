@@ -20,8 +20,8 @@ import (
 // CookiePersister est le contrat minimal requis pour persister les cookies
 // d'un indexeur entre deux invocations CLI.
 type CookiePersister interface {
-	LoadCookies(indexerID string) (string, error) // renvoie "" si aucun cookie stocké
-	SaveCookies(indexerID string, cookieJSON string) error
+	Load(indexerID string) (string, error) // renvoie "" si aucun cookie stocké
+	Store(indexerID string, data string) error
 }
 
 // Options configure la construction d'un IndexerClient.

@@ -61,7 +61,7 @@ func (j *cookieJar) load() error {
 	if j.persister == nil {
 		return nil
 	}
-	raw, err := j.persister.LoadCookies(j.indexerID)
+	raw, err := j.persister.Load(j.indexerID)
 	if err != nil {
 		return err
 	}
@@ -116,5 +116,5 @@ func (j *cookieJar) persist() error {
 	if err != nil {
 		return fmt.Errorf("encoding cookies: %w", err)
 	}
-	return j.persister.SaveCookies(j.indexerID, string(data))
+	return j.persister.Store(j.indexerID, string(data))
 }

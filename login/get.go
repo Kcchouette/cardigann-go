@@ -1,0 +1,105 @@
+package login
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+
+	cmodel "github.com/Kcchouette/cardigann-go/definition"
+	"github.com/Kcchouette/cardigann-go/internal/httputil"
+	tmpl "github.com/Kcchouette/cardigann-go/template"
+)
+
+// loginGet effectue un login par requête GET : les inputs déclarés sont envoyés
+// en paramètres d'URL (query string), puis vérification via login.error et/ou login.test.
+func loginGet(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
+	rctx := tmpl.Context{Config: config}
+
+	loginPath, err := tmpl.Render(def.Login.Login, rctx)
+	if err != nil {
+		return fmt.Errorf("rendering login path: %w", err)
+	}
+	loginURL := httputil.ResolveURL(baseURL, loginPath)
+
+	values := url.Values{}
+	for name, valueTmpl := range def.Login.Inputs {
+		rendered, err := tmpl.Render(valueTmpl, rctx)
+		if err != nil {
+			return fmt.Errorf("rendering login input %q: %w", name, err)
+		}
+		values.Set(name, rendered)
+	}
+
+	reqURL := loginURL
+	if len(values) > 0 {
+		reqURL = loginURL + "?" + values.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("building login request: %w", err)
+	}
+	for k, v := range def.Login.Headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("login request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return fmt.Errorf("reading login response: %w", err)
+	}
+
+	if err := checkLoginErrors(string(body), def.Login.Error); err != nil {
+		return err
+	}
+
+	if def.Login.Test != nil && def.Login.Test.Path != "" {
+		return verifyTest(ctx, client, baseURL, *def.Login.Test)
+	}
+	return nil
+}
+
+// loginOneURL effectue un login par une simple requête GET vers l'URL de login
+// sans aucun paramètre d'entrée. Utile pour les indexeurs qui utilisent un
+// cookie ou un token passé directement dans l'URL.
+func loginOneURL(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
+	rctx := tmpl.Context{Config: config}
+
+	loginPath, err := tmpl.Render(def.Login.Login, rctx)
+	if err != nil {
+		return fmt.Errorf("rendering login path: %w", err)
+	}
+	loginURL := httputil.ResolveURL(baseURL, loginPath)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, loginURL, nil)
+	if err != nil {
+		return fmt.Errorf("building login request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("login request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return fmt.Errorf("reading login response: %w", err)
+	}
+
+	if err := checkLoginErrors(string(body), def.Login.Error); err != nil {
+		return err
+	}
+
+	if def.Login.Test != nil && def.Login.Test.Path != "" {
+		return verifyTest(ctx, client, baseURL, *def.Login.Test)
+	}
+	return nil
+}
