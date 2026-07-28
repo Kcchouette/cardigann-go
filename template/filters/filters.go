@@ -67,12 +67,9 @@ func Apply(value string, steps []Step) (string, error) {
 }
 
 // Step représente une étape du pipeline (nom de filtre + arguments positionnels).
-// Keywords est utilisé par les filtres row-level (ex: andmatch) pour accéder
-// aux mots-clés de la recherche.
 type Step struct {
-	Name     string
-	Args     []string
-	Keywords string
+	Name string
+	Args []string
 }
 
 func trim(v string, _ []string) (string, error)    { return strings.TrimSpace(v), nil }

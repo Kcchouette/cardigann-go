@@ -1,7 +1,5 @@
 // Package selector fournit une abstraction commune aux différents modes
-// d'extraction Cardigann (CSS pour HTML, JSON path pour JSON). Le support
-// XPath/XML est repoussé au post-MVP (Slice E), le RSS Newznab utilisant
-// `encoding/xml` directement (voir internal/newznab).
+// d'extraction Cardigann (CSS pour HTML, JSON path pour JSON, XML via etree).
 package selector
 
 import (

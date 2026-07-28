@@ -83,7 +83,7 @@ func (j *cookieJar) load() error {
 }
 
 // persist sauvegarde les cookies courants pour toutes les origines vues
-// pendant la session, afin qu'un futur `gowlarr download`/`search` (nouveau
+// pendant la session, afin qu'un futur `cardigann-go` (nouveau
 // process) puisse les recharger.
 func (j *cookieJar) persist() error {
 	if j.persister == nil {

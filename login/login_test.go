@@ -499,3 +499,136 @@ func TestLogin_OneURLErrorResponse(t *testing.T) {
 		t.Errorf("expected *ErrLoginFailed, got %T: %v", err, err)
 	}
 }
+
+func TestLogin_FormWithHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/login" && r.Method == http.MethodPost {
+			if r.Header.Get("X-Custom") != "test-value" {
+				t.Errorf("expected X-Custom=test-value, got %q", r.Header.Get("X-Custom"))
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
+			w.Write([]byte(`<html><body>OK</body></html>`))
+			return
+		}
+		w.Write([]byte(`<html><body><div class="error">unexpected</div></body></html>`))
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method: "form",
+			Login:  "/login",
+			Inputs: map[string]string{
+				"username": "{{ .Config.username }}",
+				"password": "{{ .Config.password }}",
+			},
+			Headers: map[string]string{
+				"X-Custom": "test-value",
+			},
+			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{
+		"username": "alice",
+		"password": "secret",
+	})
+	if err != nil {
+		t.Fatalf("expected successful login with headers, got error: %v", err)
+	}
+}
+
+func TestLogin_FormWithCookies(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/login" && r.Method == http.MethodPost {
+			cookie, err := r.Cookie("mycookie")
+			if err != nil || cookie.Value != "myvalue" {
+				t.Errorf("expected cookie mycookie=myvalue, got err=%v value=%q", err, cookie)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
+			w.Write([]byte(`<html><body>OK</body></html>`))
+			return
+		}
+		w.Write([]byte(`<html><body><div class="error">unexpected</div></body></html>`))
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method: "form",
+			Login:  "/login",
+			Inputs: map[string]string{
+				"username": "{{ .Config.username }}",
+				"password": "{{ .Config.password }}",
+			},
+			Cookies: map[string]string{
+				"mycookie": "myvalue",
+			},
+			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{
+		"username": "alice",
+		"password": "secret",
+	})
+	if err != nil {
+		t.Fatalf("expected successful login with cookies, got error: %v", err)
+	}
+}
+
+func TestLogin_FormWithSubmitPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login-page":
+			w.Write([]byte(`<html><body>login form</body></html>`))
+		case "/submit":
+			if r.Method == http.MethodPost {
+				_ = r.ParseForm()
+				if r.FormValue("username") == "alice" {
+					http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
+					w.Write([]byte(`<html><body>OK</body></html>`))
+					return
+				}
+			}
+			w.Write([]byte(`<html><body><div class="error">bad</div></body></html>`))
+		default:
+			w.Write([]byte(`<html><body><div class="error">unexpected path</div></body></html>`))
+		}
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method:     "form",
+			Login:      "/login-page",
+			SubmitPath: "/submit",
+			Inputs: map[string]string{
+				"username": "{{ .Config.username }}",
+				"password": "{{ .Config.password }}",
+			},
+			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{
+		"username": "alice",
+		"password": "secret",
+	})
+	if err != nil {
+		t.Fatalf("expected successful login with SubmitPath, got error: %v", err)
+	}
+}

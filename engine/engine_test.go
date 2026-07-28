@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
+	"github.com/Kcchouette/cardigann-go/httpclient"
 	"github.com/Kcchouette/cardigann-go/release"
 )
 
@@ -415,5 +416,616 @@ search:
 	}
 	if len(releases) != 2 {
 		t.Fatalf("expected 2 releases, got %d", len(releases))
+	}
+}
+
+// --- Integration tests for engine package ---
+
+// Test 1: XML response parsing (Torznab format)
+func TestSearch_XMLTorznab(t *testing.T) {
+	yamlDef := `
+id: xmltracker
+name: XMLTracker
+description: XML Torznab test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /rss
+      response:
+        type: xml
+  rows:
+    selector: rss > channel > item
+  fields:
+    title:
+      selector: title
+    download:
+      selector: enclosure
+      attribute: url
+    size:
+      selector: "[name=size]"
+      attribute: value
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	torznabXML := `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:torznab="http://torznab.github.io/schemas/2015/feed">
+  <channel>
+    <item>
+      <title>Ubuntu 24.04 LTS</title>
+      <enclosure url="http://example.invalid/download/1.torrent" length="1048576" type="application/x-bittorrent"/>
+      <torznab:attr name="size" value="1048576"/>
+      <torznab:attr name="seeders" value="42"/>
+    </item>
+    <item>
+      <title>Debian 12 Netinst</title>
+      <enclosure url="http://example.invalid/download/2.torrent" length="2097152" type="application/x-bittorrent"/>
+      <torznab:attr name="size" value="2097152"/>
+      <torznab:attr name="seeders" value="7"/>
+    </item>
+  </channel>
+</rss>`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(torznabXML))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "linux"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+
+	if len(releases) != 2 {
+		t.Fatalf("expected 2 releases, got %d", len(releases))
+	}
+
+	if releases[0].Title != "Ubuntu 24.04 LTS" {
+		t.Errorf("expected title 'Ubuntu 24.04 LTS', got %q", releases[0].Title)
+	}
+	if releases[0].DownloadLink != "http://example.invalid/download/1.torrent" {
+		t.Errorf("expected download 'http://example.invalid/download/1.torrent', got %q", releases[0].DownloadLink)
+	}
+	if releases[0].Size != 1048576 {
+		t.Errorf("expected size 1048576, got %d", releases[0].Size)
+	}
+	if releases[1].Title != "Debian 12 Netinst" {
+		t.Errorf("expected title 'Debian 12 Netinst', got %q", releases[1].Title)
+	}
+	if releases[1].Size != 2097152 {
+		t.Errorf("expected size 2097152, got %d", releases[1].Size)
+	}
+}
+
+// Test 2: JSON response parsing (gjson paths)
+func TestSearch_JSONResponse(t *testing.T) {
+	yamlDef := `
+id: jsontracker
+name: JSONTracker
+description: JSON response test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /api/search
+      response:
+        type: json
+  rows:
+    selector: items
+  fields:
+    title:
+      attribute: title
+    download:
+      attribute: link
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	jsonBody := `{"items":[{"title":"TestItem1","link":"http://example.invalid/dl/1.torrent"},{"title":"TestItem2","link":"http://example.invalid/dl/2.torrent"}]}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(jsonBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+
+	if len(releases) != 2 {
+		t.Fatalf("expected 2 releases, got %d", len(releases))
+	}
+	if releases[0].Title != "TestItem1" {
+		t.Errorf("expected title 'TestItem1', got %q", releases[0].Title)
+	}
+	if releases[0].DownloadLink != "http://example.invalid/dl/1.torrent" {
+		t.Errorf("expected download link, got %q", releases[0].DownloadLink)
+	}
+	if releases[1].Title != "TestItem2" {
+		t.Errorf("expected title 'TestItem2', got %q", releases[1].Title)
+	}
+}
+
+// Test 3: POST method with form inputs
+func TestSearch_PostMethodWithInputs(t *testing.T) {
+	yamlDef := `
+id: posttracker
+name: PostTracker
+description: POST method test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      method: post
+      inputs:
+        q: "{{ .Keywords }}"
+        cat: "1"
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	var receivedMethod string
+	var receivedBody string
+	var receivedContentType string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedMethod = r.Method
+		receivedContentType = r.Header.Get("Content-Type")
+		if r.Method == http.MethodPost {
+			buf := make([]byte, 4096)
+			n, _ := r.Body.Read(buf)
+			receivedBody = string(buf[:n])
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body>
+<table class="results">
+  <tr><td><a class="title" href="/d1">Result1</a></td><td><a class="dl" href="/dl/1">DL</a></td></tr>
+</table>
+</body></html>`))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test query"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+
+	if receivedMethod != http.MethodPost {
+		t.Errorf("expected POST method, got %q", receivedMethod)
+	}
+	if receivedContentType != "application/x-www-form-urlencoded" {
+		t.Errorf("expected content-type 'application/x-www-form-urlencoded', got %q", receivedContentType)
+	}
+	if !strings.Contains(receivedBody, "q=test+query") || !strings.Contains(receivedBody, "cat=1") {
+		t.Errorf("expected body to contain 'q=test+query&cat=1', got %q", receivedBody)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+	if releases[0].Title != "Result1" {
+		t.Errorf("expected title 'Result1', got %q", releases[0].Title)
+	}
+}
+
+// Test 4: GET method with query input parameters
+func TestSearch_GetWithInputs(t *testing.T) {
+	yamlDef := `
+id: gettracker
+name: GetTracker
+description: GET with inputs test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      inputs:
+        q: "{{ .Keywords }}"
+        limit: "100"
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	var receivedQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body>
+<table class="results">
+  <tr><td><a class="title" href="/d1">Result1</a></td><td><a class="dl" href="/dl/1">DL</a></td></tr>
+</table>
+</body></html>`))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "my+keywords"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+
+	if !strings.Contains(receivedQuery, "q=my%2Bkeywords") && !strings.Contains(receivedQuery, "q=my+keywords") {
+		t.Errorf("expected query to contain 'q=my+keywords', got %q", receivedQuery)
+	}
+	if !strings.Contains(receivedQuery, "limit=100") {
+		t.Errorf("expected query to contain 'limit=100', got %q", receivedQuery)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+}
+
+// Test 5: Row-level andmatch filter
+func TestSearch_RowFiltersAndmatch(t *testing.T) {
+	yamlDef := `
+id: andmatchtracker
+name: AndmatchTracker
+description: andmatch filter test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+    filters:
+      - name: andmatch
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	htmlBody := `<html><body>
+<table class="results">
+  <tr><td><a class="title" href="/d1">The Matrix Reloaded</a></td><td><a class="dl" href="/dl/1">DL</a></td></tr>
+  <tr><td><a class="title" href="/d2">Inception Movie</a></td><td><a class="dl" href="/dl/2">DL</a></td></tr>
+  <tr><td><a class="title" href="/d3">The Matrix Revolutions</a></td><td><a class="dl" href="/dl/3">DL</a></td></tr>
+  <tr><td><a class="title" href="/d4">Toy Story 4</a></td><td><a class="dl" href="/dl/4">DL</a></td></tr>
+  <tr><td><a class="title" href="/d5">The Matrix Resurrections</a></td><td><a class="dl" href="/dl/5">DL</a></td></tr>
+</table>
+</body></html>`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(htmlBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "matrix"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+
+	if len(releases) != 3 {
+		t.Fatalf("expected 3 releases matching 'matrix', got %d", len(releases))
+	}
+	for i, r := range releases {
+		if !strings.Contains(strings.ToLower(r.Title), "matrix") {
+			t.Errorf("release %d title %q does not contain 'matrix'", i, r.Title)
+		}
+	}
+}
+
+// Test 6: Optional text fields
+func TestSearch_WithOptionalTextFields(t *testing.T) {
+	yamlDef := `
+id: optiontracker
+name: OptionTracker
+description: optional fields test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+    details:
+      text: mysite
+    category:
+      selector: td.nonexistent
+      optional: true
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body>
+<table class="results">
+  <tr><td><a class="title" href="/d1">SomeTitle</a></td><td><a class="dl" href="/dl/1">DL</a></td></tr>
+</table>
+</body></html>`))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+	if releases[0].Details != "mysite" {
+		t.Errorf("expected details 'mysite' from text field, got %q", releases[0].Details)
+	}
+}
+
+// Test 7: Infohash extraction with before-response
+func TestSearch_InfohashWithBeforeResponse(t *testing.T) {
+	yamlDef := `
+id: infohashtracker
+name: InfohashTracker
+description: infohash before-response test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+download:
+  before:
+    path: /api/info
+  infohash:
+    usebeforeresponse: true
+    hash:
+      selector: "[name=hash]"
+      filters:
+        - name: regexp
+          args: ["([a-f0-9]{40})"]
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	var beforeFetched bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/search":
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<html><body>
+<table class="results">
+  <tr><td><a class="title" href="/d1">TestTorrent</a></td><td><a class="dl" href="/dl/1">DL</a></td></tr>
+</table>
+</body></html>`))
+		case "/api/info":
+			beforeFetched = true
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<html><body><div><item name="hash"><item name="hash">a0b1c2d3e4f5a0b1c2d3e4f5a0b1c2d3e4f5a0b1</item></item></div></body></html>`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+
+	if !beforeFetched {
+		t.Error("expected /api/info to be fetched before extraction")
+	}
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+	if releases[0].InfoHash != "a0b1c2d3e4f5a0b1c2d3e4f5a0b1c2d3e4f5a0b1" {
+		t.Errorf("expected infohash 'a0b1c2d3e4f5a0b1c2d3e4f5a0b1c2d3e4f5a0b1', got %q", releases[0].InfoHash)
+	}
+}
+
+// Test 8: Login with CSRF token extraction
+func TestSearch_LoginCSRF(t *testing.T) {
+	yamlDef := `
+id: loginctracker
+name: LoginTracker
+description: login CSRF test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+login:
+  method: form
+  login: /login
+  inputs:
+    username: testuser
+    password: testpass
+  selectorinputs:
+    csrf_token:
+      selector: input[name=csrf_token]
+      attribute: value
+  test:
+    path: /check
+    selector: div.logged-in
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	var requestLog []string
+	var receivedCSRF string
+	var receivedUsername string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			if r.Method == http.MethodGet {
+				requestLog = append(requestLog, "GET /login")
+				w.Header().Set("Content-Type", "text/html")
+				_, _ = w.Write([]byte(`<html><body>
+<form method="post" action="/login">
+  <input type="hidden" name="csrf_token" value="abc123csrf"/>
+  <input type="text" name="username"/>
+  <input type="password" name="password"/>
+</form>
+</body></html>`))
+			} else if r.Method == http.MethodPost {
+				requestLog = append(requestLog, "POST /login")
+				buf := make([]byte, 4096)
+				n, _ := r.Body.Read(buf)
+				body := string(buf[:n])
+				receivedCSRF = ""
+				for _, part := range strings.Split(body, "&") {
+					if strings.HasPrefix(part, "csrf_token=") {
+						receivedCSRF = strings.TrimPrefix(part, "csrf_token=")
+					}
+					if strings.HasPrefix(part, "username=") {
+						receivedUsername = strings.TrimPrefix(part, "username=")
+					}
+				}
+				w.WriteHeader(http.StatusOK)
+			}
+		case "/check":
+			requestLog = append(requestLog, "GET /check")
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<html><body><div class="logged-in">Welcome</div></body></html>`))
+		case "/search":
+			requestLog = append(requestLog, "GET /search")
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<html><body>
+<table class="results">
+  <tr><td><a class="title" href="/d1">LoggedInResult</a></td><td><a class="dl" href="/dl/1">DL</a></td></tr>
+</table>
+</body></html>`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client, err := httpclient.New(httpclient.Options{
+		IndexerID: "loginctracker",
+	})
+	if err != nil {
+		t.Fatalf("creating httpclient: %v", err)
+	}
+
+	provider := NewAuthenticatedProvider(def, server.URL, nil, client)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+
+	// Verify login flow: GET /login → POST /login → GET /check → GET /search
+	if len(requestLog) < 4 {
+		t.Fatalf("expected at least 4 requests, got %d: %v", len(requestLog), requestLog)
+	}
+	if requestLog[0] != "GET /login" {
+		t.Errorf("expected first request 'GET /login', got %q", requestLog[0])
+	}
+	if requestLog[1] != "POST /login" {
+		t.Errorf("expected second request 'POST /login', got %q", requestLog[1])
+	}
+	if requestLog[2] != "GET /check" {
+		t.Errorf("expected third request 'GET /check', got %q", requestLog[2])
+	}
+
+	if receivedCSRF != "abc123csrf" {
+		t.Errorf("expected CSRF token 'abc123csrf', got %q", receivedCSRF)
+	}
+	if receivedUsername != "testuser" {
+		t.Errorf("expected username 'testuser', got %q", receivedUsername)
+	}
+
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+	if releases[0].Title != "LoggedInResult" {
+		t.Errorf("expected title 'LoggedInResult', got %q", releases[0].Title)
 	}
 }

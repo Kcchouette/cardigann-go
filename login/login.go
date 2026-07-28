@@ -77,6 +77,9 @@ func loginCookie(client *http.Client, baseURL string, config map[string]string) 
 
 // loginForm exécute un login par formulaire HTML : POST des inputs déclarés
 // vers l'URL de login, puis vérification via login.error et/ou login.test.
+//
+// NOTE: def.Login.Form (explicit CSS selector for the login form element)
+// is not yet wired. The current implementation submits the first form found.
 func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
 	rctx := tmpl.Context{Config: config}
 
@@ -84,7 +87,20 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 	if err != nil {
 		return fmt.Errorf("rendering login path: %w", err)
 	}
+	if def.Login.SubmitPath != "" {
+		loginPath, err = tmpl.Render(def.Login.SubmitPath, rctx)
+		if err != nil {
+			return fmt.Errorf("rendering submit path: %w", err)
+		}
+	}
 	loginURL := resolveURL(baseURL, loginPath)
+
+	if len(def.Login.Cookies) > 0 && client.Jar != nil {
+		u, _ := url.Parse(baseURL)
+		for name, value := range def.Login.Cookies {
+			client.Jar.SetCookies(u, []*http.Cookie{{Name: name, Value: value}})
+		}
+	}
 
 	// Extract dynamic values from the login page (CSRF tokens, etc.)
 	extracted, err := extractSelectorInputs(ctx, client, def, baseURL, rctx)
@@ -110,6 +126,9 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 		return fmt.Errorf("building login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for k, v := range def.Login.Headers {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -226,6 +245,9 @@ func loginGet(ctx context.Context, client *http.Client, def cmodel.IndexerDefini
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return fmt.Errorf("building login request: %w", err)
+	}
+	for k, v := range def.Login.Headers {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := client.Do(req)
