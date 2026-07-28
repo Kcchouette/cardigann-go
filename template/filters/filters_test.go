@@ -302,3 +302,52 @@ func TestFuzzyTime_OrdinalSuffixes(t *testing.T) {
 		})
 	}
 }
+
+func TestDateParse_Microseconds(t *testing.T) {
+	// Test date formats with microseconds (API Abnormal)
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"RFC3339 with microseconds", "2026-07-28T21:06:19.348985+00:01", "2026-07-28T21:06:19+00:01"},
+		{"ISO without timezone", "2026-07-10T07:51:24.880001", "2026-07-10T07:51:24Z"},
+		{"Simple datetime", "2026-01-15T10:30:00", "2026-01-15T10:30:00Z"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Apply(tt.value, []Step{{Name: "dateparse"}})
+			if err != nil {
+				t.Fatalf("dateparse error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("dateparse(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReReplace_InvalidRegex(t *testing.T) {
+	// Test that invalid regex patterns (PCRE features) return original value
+	tests := []struct {
+		name  string
+		value string
+		regex string
+		want  string
+	}{
+		{"lookahead", "MULTI FRENCH", `(?i)MULTI(?!.*FRENCH)`, "MULTI FRENCH"},
+		{"lookbehind", "test123", `(?<=test)123`, "test123"},
+		{"invalid syntax", "test", `[invalid`, "test"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Apply(tt.value, []Step{{Name: "re_replace", Args: []string{tt.regex, ""}}})
+			if err != nil {
+				t.Fatalf("re_replace error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("re_replace(%q, %q) = %q, want %q", tt.value, tt.regex, got, tt.want)
+			}
+		})
+	}
+}

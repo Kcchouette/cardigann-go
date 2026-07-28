@@ -165,3 +165,169 @@ func TestParse_InvalidYAML(t *testing.T) {
 		t.Fatal("expected error for invalid yaml")
 	}
 }
+
+func TestFilterStep_StringArgs(t *testing.T) {
+	yaml := `
+id: test
+name: Test
+links:
+  - https://example.invalid/
+search:
+  paths:
+    - path: /search
+      response: {type: html}
+  rows:
+    selector: tr
+  fields:
+    title:
+      selector: td
+      filters:
+        - name: replace
+          args: "old new"
+`
+	def, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	filters := def.Search.Fields["title"].Filters
+	if len(filters) != 1 {
+		t.Fatalf("expected 1 filter, got %d", len(filters))
+	}
+	if filters[0].Name != "replace" {
+		t.Errorf("filter name = %q, want %q", filters[0].Name, "replace")
+	}
+	// String args are kept as a single element array
+	if len(filters[0].Args) != 1 || filters[0].Args[0] != "old new" {
+		t.Errorf("filter args = %v, want [old new]", filters[0].Args)
+	}
+}
+
+func TestFilterStep_ArrayArgs(t *testing.T) {
+	yaml := `
+id: test
+name: Test
+links:
+  - https://example.invalid/
+search:
+  paths:
+    - path: /search
+      response: {type: html}
+  rows:
+    selector: tr
+  fields:
+    title:
+      selector: td
+      filters:
+        - name: re_replace
+          args: ["\\.", " "]
+`
+	def, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	filters := def.Search.Fields["title"].Filters
+	if len(filters) != 1 {
+		t.Fatalf("expected 1 filter, got %d", len(filters))
+	}
+	if len(filters[0].Args) != 2 || filters[0].Args[0] != "\\." || filters[0].Args[1] != " " {
+		t.Errorf("filter args = %v, want [\\.  ]", filters[0].Args)
+	}
+}
+
+func TestSearchInputs(t *testing.T) {
+	yaml := `
+id: test
+name: Test
+links:
+  - https://example.invalid/
+search:
+  paths:
+    - path: /search
+      response: {type: html}
+  inputs:
+    name: "{{ .Keywords }}"
+    resultByPage: 100
+  rows:
+    selector: tr
+  fields:
+    title:
+      selector: td
+`
+	def, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(def.Search.Inputs) != 2 {
+		t.Fatalf("expected 2 inputs, got %d", len(def.Search.Inputs))
+	}
+	if def.Search.Inputs["name"] != "{{ .Keywords }}" {
+		t.Errorf("input name = %q, want %q", def.Search.Inputs["name"], "{{ .Keywords }}")
+	}
+	if def.Search.Inputs["resultByPage"] != "100" {
+		t.Errorf("input resultByPage = %q, want %q", def.Search.Inputs["resultByPage"], "100")
+	}
+}
+
+func TestSearchHeaders(t *testing.T) {
+	yaml := `
+id: test
+name: Test
+links:
+  - https://example.invalid/
+search:
+  paths:
+    - path: /search
+      response: {type: html}
+  headers:
+    Authorization: ["Bearer {{ .Config.apikey }}"]
+  rows:
+    selector: tr
+  fields:
+    title:
+      selector: td
+`
+	def, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(def.Search.Headers) != 1 {
+		t.Fatalf("expected 1 header, got %d", len(def.Search.Headers))
+	}
+	vals, ok := def.Search.Headers["Authorization"]
+	if !ok || len(vals) != 1 || vals[0] != "Bearer {{ .Config.apikey }}" {
+		t.Errorf("header Authorization = %v, want [Bearer {{ .Config.apikey }}]", vals)
+	}
+}
+
+func TestSearchPathInputs(t *testing.T) {
+	yaml := `
+id: test
+name: Test
+links:
+  - https://example.invalid/
+search:
+  paths:
+    - path: /search
+      response: {type: html}
+      inputs:
+        q: "{{ .Keywords }}"
+  rows:
+    selector: tr
+  fields:
+    title:
+      selector: td
+`
+	def, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(def.Search.Paths) != 1 {
+		t.Fatalf("expected 1 path, got %d", len(def.Search.Paths))
+	}
+	if len(def.Search.Paths[0].Inputs) != 1 {
+		t.Fatalf("expected 1 path input, got %d", len(def.Search.Paths[0].Inputs))
+	}
+	if def.Search.Paths[0].Inputs["q"] != "{{ .Keywords }}" {
+		t.Errorf("path input q = %q, want %q", def.Search.Paths[0].Inputs["q"], "{{ .Keywords }}")
+	}
+}

@@ -1029,3 +1029,299 @@ search:
 		t.Errorf("expected title 'LoggedInResult', got %q", releases[0].Title)
 	}
 }
+
+// --- Tests for gowlarr compatibility fixes ---
+
+func TestProviderSearch_FullURLPath(t *testing.T) {
+	// Test that full URLs in search paths skip BaseURL prefix
+	def, err := cmodel.Parse([]byte(`
+id: test
+name: Test
+links:
+  - http://base.invalid/
+search:
+  paths:
+    - path: "/api/search"
+      response:
+        type: html
+  inputs:
+    q: "{{ .Keywords }}"
+  rows:
+    selector: tr
+  fields:
+    title:
+      selector: td
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	var receivedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body><table><tr><td>Result</td></tr></table></body></html>`))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+
+	_, err = provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	if receivedPath != "/api/search" {
+		t.Errorf("expected path '/api/search', got %q", receivedPath)
+	}
+}
+
+func TestProviderSearch_RawParams(t *testing.T) {
+	// Test $raw parameter support
+	def, err := cmodel.Parse([]byte(`
+id: test
+name: Test
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  inputs:
+    $raw: "categoryId=2000&categoryId=3000"
+    q: "{{ .Keywords }}"
+  rows:
+    selector: tr
+  fields:
+    title:
+      selector: td
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	var receivedQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body><table><tr><td>Result</td></tr></table></body></html>`))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+
+	_, err = provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	if !strings.Contains(receivedQuery, "categoryId=2000") || !strings.Contains(receivedQuery, "categoryId=3000") {
+		t.Errorf("expected categoryId params in query, got %q", receivedQuery)
+	}
+}
+
+func TestProviderSearch_SkipEmptyInputs(t *testing.T) {
+	// Test that empty and "false" input values are skipped
+	def, err := cmodel.Parse([]byte(`
+id: test
+name: Test
+links:
+  - http://example.invalid/
+settings:
+  - name: freeleech
+    type: checkbox
+    default: "false"
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  inputs:
+    q: "{{ .Keywords }}"
+    freeleech: "{{ if .Config.freeleech }}true{{ else }}{{ end }}"
+  rows:
+    selector: tr
+  fields:
+    title:
+      selector: td
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	var receivedQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body><table><tr><td>Result</td></tr></table></body></html>`))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+
+	_, err = provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	// freeleech should not be in the query since it's "false"
+	if strings.Contains(receivedQuery, "freeleech") {
+		t.Errorf("freeleech should not be in query when config is false, got %q", receivedQuery)
+	}
+}
+
+func TestProviderSearch_SearchHeaders(t *testing.T) {
+	// Test search-level headers
+	def, err := cmodel.Parse([]byte(`
+id: test
+name: Test
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  headers:
+    Authorization: ["Bearer {{ .Config.apikey }}"]
+  inputs:
+    q: "{{ .Keywords }}"
+  rows:
+    selector: tr
+  fields:
+    title:
+      selector: td
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	var receivedAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body><table><tr><td>Result</td></tr></table></body></html>`))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, map[string]string{
+		"apikey": "secret123",
+	})
+
+	_, err = provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	if receivedAuth != "Bearer secret123" {
+		t.Errorf("expected Authorization header 'Bearer secret123', got %q", receivedAuth)
+	}
+}
+
+func TestProviderSearch_ConfigDefaults(t *testing.T) {
+	// Test that config defaults from definition are applied
+	def, err := cmodel.Parse([]byte(`
+id: test
+name: Test
+links:
+  - http://example.invalid/
+settings:
+  - name: sort
+    type: select
+    default: created
+  - name: type
+    type: select
+    default: desc
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  inputs:
+    q: "{{ .Keywords }}"
+    sort: "{{ .Config.sort }}"
+    order: "{{ .Config.type }}"
+  rows:
+    selector: tr
+  fields:
+    title:
+      selector: td
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	var receivedQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body><table><tr><td>Result</td></tr></table></body></html>`))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+
+	_, err = provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	if !strings.Contains(receivedQuery, "sort=created") {
+		t.Errorf("expected sort=created in query, got %q", receivedQuery)
+	}
+	if !strings.Contains(receivedQuery, "order=desc") {
+		t.Errorf("expected order=desc in query, got %q", receivedQuery)
+	}
+}
+
+func TestProviderSearch_JSONDollarSelector(t *testing.T) {
+	// Test $ selector in JSON (returns all array items)
+	def, err := cmodel.Parse([]byte(`
+id: test
+name: Test
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      response:
+        type: json
+  inputs:
+    q: "{{ .Keywords }}"
+  rows:
+    selector: $
+  fields:
+    title:
+      selector: name
+    size:
+      selector: size
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	jsonResponse := `[{"name":"First","size":100},{"name":"Second","size":200}]`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(jsonResponse))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	if len(releases) != 2 {
+		t.Fatalf("expected 2 releases, got %d", len(releases))
+	}
+	if releases[0].Title != "First" || releases[0].Size != 100 {
+		t.Errorf("first release = %+v, want First/100", releases[0])
+	}
+	if releases[1].Title != "Second" || releases[1].Size != 200 {
+		t.Errorf("second release = %+v, want Second/200", releases[1])
+	}
+}

@@ -221,3 +221,93 @@ func TestJSONDocument_SubSelectArray(t *testing.T) {
 		t.Errorf("unexpected tag: %q", tagNodes1[0].Text())
 	}
 }
+
+func TestJSONDocument_DollarSelector(t *testing.T) {
+	// Test $ selector returns all array items
+	doc, err := NewJSONDocument(`[{"name":"First","size":100},{"name":"Second","size":200}]`)
+	if err != nil {
+		t.Fatalf("NewJSONDocument: %v", err)
+	}
+
+	nodes, err := doc.Find("$")
+	if err != nil {
+		t.Fatalf("Find $: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(nodes))
+	}
+
+	if nodes[0].Text() != `{"name":"First","size":100}` {
+		t.Errorf("unexpected first node text: %q", nodes[0].Text())
+	}
+	if nodes[1].Text() != `{"name":"Second","size":200}` {
+		t.Errorf("unexpected second node text: %q", nodes[1].Text())
+	}
+}
+
+func TestJSONDocument_DollarSelector_Object(t *testing.T) {
+	// Test $ selector on a single object (not array)
+	doc, err := NewJSONDocument(`{"name":"Single","value":42}`)
+	if err != nil {
+		t.Fatalf("NewJSONDocument: %v", err)
+	}
+
+	nodes, err := doc.Find("$")
+	if err != nil {
+		t.Fatalf("Find $: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+
+	if nodes[0].Text() != `{"name":"Single","value":42}` {
+		t.Errorf("unexpected node text: %q", nodes[0].Text())
+	}
+}
+
+func TestJSONDocument_DollarSelector_NestedArray(t *testing.T) {
+	// Test $ selector on nested array
+	doc, err := NewJSONDocument(`{"items":[{"id":1},{"id":2},{"id":3}]}`)
+	if err != nil {
+		t.Fatalf("NewJSONDocument: %v", err)
+	}
+
+	nodes, err := doc.Find("items")
+	if err != nil {
+		t.Fatalf("Find items: %v", err)
+	}
+	if len(nodes) != 3 {
+		t.Fatalf("expected 3 nodes, got %d", len(nodes))
+	}
+}
+
+func TestJSONDocument_Attr(t *testing.T) {
+	// Test Attr method on JSON nodes
+	doc, err := NewJSONDocument(`[{"name":"Test","size":12345}]`)
+	if err != nil {
+		t.Fatalf("NewJSONDocument: %v", err)
+	}
+
+	nodes, err := doc.Find("$")
+	if err != nil {
+		t.Fatalf("Find $: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+
+	name, ok := nodes[0].Attr("name")
+	if !ok || name != "Test" {
+		t.Errorf("Attr(name) = %q, %v, want 'Test', true", name, ok)
+	}
+
+	size, ok := nodes[0].Attr("size")
+	if !ok || size != "12345" {
+		t.Errorf("Attr(size) = %q, %v, want '12345', true", size, ok)
+	}
+
+	_, ok = nodes[0].Attr("nonexistent")
+	if ok {
+		t.Error("expected Attr(nonexistent) to return false")
+	}
+}
