@@ -32,4 +32,4 @@ Thumbs.db
 
 # MiMoCode
 .worktrees/
-.mimocode/.cron-lock
+.mimocode/
