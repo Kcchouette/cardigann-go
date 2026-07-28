@@ -66,3 +66,29 @@ func TestRender_InvalidTemplate(t *testing.T) {
 		t.Fatal("expected parse error for invalid template")
 	}
 }
+
+func TestRender_QueryFields(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		query    map[string]string
+		expected string
+	}{
+		{"TVDBID", `{{ index .Query "TVDBID" }}`, map[string]string{"TVDBID": "12345"}, "12345"},
+		{"Year", `{{ index .Query "Year" }}`, map[string]string{"Year": "2024"}, "2024"},
+		{"Genre", `{{ index .Query "Genre" }}`, map[string]string{"Genre": "action"}, "action"},
+		{"DoubanID", `{{ index .Query "DoubanID" }}`, map[string]string{"DoubanID": "3691"}, "3691"},
+		{"IMDBIDShort", `{{ index .Query "IMDBIDShort" }}`, map[string]string{"IMDBIDShort": "1234567"}, "1234567"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Render(tt.template, Context{Query: tt.query})
+			if err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			if got != tt.expected {
+				t.Errorf("got %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}

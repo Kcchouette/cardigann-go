@@ -97,3 +97,127 @@ func TestJSONDocument_MissingPath(t *testing.T) {
 		t.Errorf("expected nil nodes for missing path, got %v", nodes)
 	}
 }
+
+func TestJSONDocument_SubSelect(t *testing.T) {
+	doc, err := NewJSONDocument(`{
+		"results": [
+			{"title": "Alpha", "links": {"details": "/dl/1", "download": "/dl/1.torrent"}},
+			{"title": "Beta",  "links": {"details": "/dl/2", "download": "/dl/2.torrent"}}
+		]
+	}`)
+	if err != nil {
+		t.Fatalf("NewJSONDocument: %v", err)
+	}
+
+	rows, err := doc.Find("results")
+	if err != nil {
+		t.Fatalf("Find rows: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+
+	sub, ok := rows[0].(SubSelectable)
+	if !ok {
+		t.Fatal("expected row node to implement SubSelectable")
+	}
+
+	// Sub-select scalar field
+	titleNodes, err := sub.Find("title")
+	if err != nil {
+		t.Fatalf("sub Find title: %v", err)
+	}
+	if len(titleNodes) != 1 {
+		t.Fatalf("expected 1 title node, got %d", len(titleNodes))
+	}
+	if titleNodes[0].Text() != "Alpha" {
+		t.Errorf("unexpected title text: %q", titleNodes[0].Text())
+	}
+
+	// Sub-select nested object
+	linkNodes, err := sub.Find("links")
+	if err != nil {
+		t.Fatalf("sub Find links: %v", err)
+	}
+	if len(linkNodes) != 1 {
+		t.Fatalf("expected 1 link node, got %d", len(linkNodes))
+	}
+	detail, ok := linkNodes[0].Attr("details")
+	if !ok || detail != "/dl/1" {
+		t.Errorf("unexpected details attr: %q (ok=%v)", detail, ok)
+	}
+
+	// Sub-select via dot-path into nested object
+	dlNodes, err := sub.Find("links.download")
+	if err != nil {
+		t.Fatalf("sub Find links.download: %v", err)
+	}
+	if len(dlNodes) != 1 {
+		t.Fatalf("expected 1 download node, got %d", len(dlNodes))
+	}
+	if dlNodes[0].Text() != "/dl/1.torrent" {
+		t.Errorf("unexpected download text: %q", dlNodes[0].Text())
+	}
+
+	// Sub-select nonexistent path
+	missing, err := sub.Find("nonexistent")
+	if err != nil {
+		t.Fatalf("sub Find nonexistent: %v", err)
+	}
+	if missing != nil {
+		t.Errorf("expected nil for nonexistent path, got %v", missing)
+	}
+}
+
+func TestJSONDocument_SubSelectArray(t *testing.T) {
+	doc, err := NewJSONDocument(`{
+		"items": [
+			{"tags": ["action", "drama"]},
+			{"tags": ["comedy"]}
+		]
+	}`)
+	if err != nil {
+		t.Fatalf("NewJSONDocument: %v", err)
+	}
+
+	rows, err := doc.Find("items")
+	if err != nil {
+		t.Fatalf("Find items: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+
+	sub0, ok := rows[0].(SubSelectable)
+	if !ok {
+		t.Fatal("expected row 0 to implement SubSelectable")
+	}
+	tagNodes, err := sub0.Find("tags")
+	if err != nil {
+		t.Fatalf("sub Find tags: %v", err)
+	}
+	if len(tagNodes) != 2 {
+		t.Fatalf("expected 2 tag nodes, got %d", len(tagNodes))
+	}
+	if tagNodes[0].Text() != "action" {
+		t.Errorf("unexpected tag[0]: %q", tagNodes[0].Text())
+	}
+	if tagNodes[1].Text() != "drama" {
+		t.Errorf("unexpected tag[1]: %q", tagNodes[1].Text())
+	}
+
+	sub1, ok := rows[1].(SubSelectable)
+	if !ok {
+		t.Fatal("expected row 1 to implement SubSelectable")
+	}
+	tagNodes1, err := sub1.Find("tags")
+	if err != nil {
+		t.Fatalf("sub Find tags row1: %v", err)
+	}
+	if len(tagNodes1) != 1 {
+		t.Fatalf("expected 1 tag node for row 1, got %d", len(tagNodes1))
+	}
+	if tagNodes1[0].Text() != "comedy" {
+		t.Errorf("unexpected tag: %q", tagNodes1[0].Text())
+	}
+}

@@ -77,9 +77,8 @@ func loginCookie(client *http.Client, baseURL string, config map[string]string) 
 
 // loginForm exécute un login par formulaire HTML : POST des inputs déclarés
 // vers l'URL de login, puis vérification via login.error et/ou login.test.
-//
-// NOTE: def.Login.Form (explicit CSS selector for the login form element)
-// is not yet wired. The current implementation submits the first form found.
+// Si def.Login.Form est défini, le formulaire ciblé est sélectionné via ce
+// sélecteur CSS (action URL et extraction des inputs.scopeées à ce formulaire).
 func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
 	rctx := tmpl.Context{Config: config}
 
@@ -103,9 +102,16 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 	}
 
 	// Extract dynamic values from the login page (CSRF tokens, etc.)
-	extracted, err := extractSelectorInputs(ctx, client, def, baseURL, rctx)
+	extracted, err := extractSelectorInputs(ctx, client, def, baseURL, rctx, def.Login.Form)
 	if err != nil {
 		return fmt.Errorf("extracting selector inputs: %w", err)
+	}
+
+	// If Form selector found a form action, use it as POST target
+	// (SubmitPath takes precedence if explicitly set)
+	if def.Login.SubmitPath == "" && extracted.FormAction != "" {
+		loginPath = extracted.FormAction
+		loginURL = resolveURL(baseURL, extracted.FormAction)
 	}
 
 	values := url.Values{}
@@ -117,7 +123,7 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 		values.Set(name, rendered)
 	}
 	// Merge extracted values (they override static inputs if same key)
-	for k, v := range extracted {
+	for k, v := range extracted.Values {
 		values.Set(k, v)
 	}
 
@@ -151,11 +157,21 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 	return nil
 }
 
+// extractSelectorInputsResult holds the extracted values and optional form action.
+type extractSelectorInputsResult struct {
+	Values     map[string]string
+	FormAction string
+}
+
 // extractSelectorInputs fetches the login page via GET and extracts values
 // from HTML using the configured selectorinputs (CSRF tokens, hidden fields, etc.).
-func extractSelectorInputs(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, rctx tmpl.Context) (map[string]string, error) {
-	if len(def.Login.SelectorInputs) == 0 {
-		return nil, nil
+// When formSelector is non-empty, the extraction is scoped to the matching <form>
+// element and its action attribute is returned in FormAction.
+func extractSelectorInputs(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, rctx tmpl.Context, formSelector string) (*extractSelectorInputsResult, error) {
+	result := &extractSelectorInputsResult{Values: make(map[string]string)}
+
+	if len(def.Login.SelectorInputs) == 0 && formSelector == "" {
+		return result, nil
 	}
 
 	loginPath, err := tmpl.Render(def.Login.Login, rctx)
@@ -181,12 +197,34 @@ func extractSelectorInputs(ctx context.Context, client *http.Client, def cmodel.
 
 	doc, err := selector.NewHTMLDocument(string(body))
 	if err != nil {
-		return nil, nil // non-HTML, skip
+		if formSelector != "" {
+			return nil, fmt.Errorf("login form selector requires HTML response")
+		}
+		return result, nil // non-HTML, skip (backward compat when no form selector)
 	}
 
-	result := make(map[string]string)
+	// Scope to specific form if selector provided
+	var scope selector.Node
+	if formSelector != "" {
+		formNodes, err := doc.Find(formSelector)
+		if err != nil || len(formNodes) == 0 {
+			return nil, fmt.Errorf("login form selector %q matched nothing", formSelector)
+		}
+		scope = formNodes[0]
+		if action, ok := scope.Attr("action"); ok && action != "" {
+			result.FormAction = action
+		}
+	}
+
 	for name, sel := range def.Login.SelectorInputs {
-		nodes, err := doc.Find(sel.Selector)
+		var nodes []selector.Node
+		if scope != nil {
+			if sub, ok := scope.(selector.SubSelectable); ok {
+				nodes, err = sub.Find(sel.Selector)
+			}
+		} else {
+			nodes, err = doc.Find(sel.Selector)
+		}
 		if err != nil || len(nodes) == 0 {
 			if sel.Optional {
 				continue
@@ -212,7 +250,7 @@ func extractSelectorInputs(ctx context.Context, client *http.Client, def cmodel.
 				continue
 			}
 		}
-		result[name] = raw
+		result.Values[name] = raw
 	}
 	return result, nil
 }

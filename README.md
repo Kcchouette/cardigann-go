@@ -69,6 +69,27 @@ func main() {
 | Template rendering | Done |
 | HTTP client (rate limit, retries, proxy) | Done |
 
+## Query Parameters
+
+The following keys are available via `{{ index .Query "<key>" }}` in search paths
+and field templates. `Keywords` is also available as `{{ .Keywords }}` at the
+top level of the template context.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `Keywords` | string | Search keywords (also: `{{ .Keywords }}`) |
+| `q` | string | Alias for Keywords |
+| `IMDBID` | string | Full IMDb ID, e.g. `tt1234567` |
+| `IMDBIDShort` | string | Numeric-only IMDb ID, e.g. `1234567` |
+| `TMDBID` | string | The Movie Database ID |
+| `TVDBID` | string | TheTVDB series ID |
+| `DoubanID` | string | Douban movie ID (Asian indexers) |
+| `Season` | string | Season number |
+| `Ep` | string | Episode number |
+| `Year` | string | Release year |
+| `Genre` | string | Genre filter string |
+| `categories` | string | Comma-separated native category IDs (when categories are requested) |
+
 ## Contributing
 
 1. Fork the repository

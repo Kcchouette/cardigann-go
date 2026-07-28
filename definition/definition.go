@@ -6,7 +6,10 @@
 // toutes les fonctionnalités du schéma.
 package definition
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // IndexerDefinition représente une définition Cardigann complète (v11).
 type IndexerDefinition struct {
@@ -174,6 +177,33 @@ type Field struct {
 type FilterStep struct {
 	Name string   `yaml:"name"`
 	Args []string `yaml:"args"`
+}
+
+// UnmarshalYAML supporte args comme string unique OU tableau de strings.
+// Compatible avec les définitions Prowlarr qui utilisent parfois une string
+// au lieu d'un tableau (ex: args: " +00:01" au lieu de args: [" +00:01"]).
+func (f *FilterStep) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	type rawFilterStep struct {
+		Name string      `yaml:"name"`
+		Args interface{} `yaml:"args"`
+	}
+	var raw rawFilterStep
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+	f.Name = raw.Name
+	switch v := raw.Args.(type) {
+	case string:
+		if v != "" {
+			f.Args = []string{v}
+		}
+	case []interface{}:
+		f.Args = make([]string, len(v))
+		for i, item := range v {
+			f.Args[i] = fmt.Sprintf("%v", item)
+		}
+	}
+	return nil
 }
 
 // SelectorField décrit un sélecteur CSS avec extraction d'attribut et filtres.

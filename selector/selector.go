@@ -122,3 +122,21 @@ func (n *jsonNode) Attr(name string) (string, bool) {
 	}
 	return sub.String(), true
 }
+
+// Find ré-applique un sélecteur gjson relativement à ce noeud (sous-sélection
+// d'un champ à l'intérieur d'une ligne de résultat JSON).
+func (n *jsonNode) Find(selector string) ([]Node, error) {
+	result := n.result.Get(selector)
+	if !result.Exists() {
+		return nil, nil
+	}
+	if result.IsArray() {
+		nodes := make([]Node, 0)
+		result.ForEach(func(_, value gjson.Result) bool {
+			nodes = append(nodes, &jsonNode{result: value})
+			return true
+		})
+		return nodes, nil
+	}
+	return []Node{&jsonNode{result: result}}, nil
+}

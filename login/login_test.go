@@ -632,3 +632,191 @@ func TestLogin_FormWithSubmitPath(t *testing.T) {
 		t.Fatalf("expected successful login with SubmitPath, got error: %v", err)
 	}
 }
+
+func TestLogin_FormWithExplicitSelector(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login-page":
+			w.Write([]byte(`<html><body>
+				<form id="register" action="/register">
+					<input name="email" />
+				</form>
+				<form id="login-form" action="/auth">
+					<input name="username" />
+					<input name="password" />
+					<input type="hidden" name="csrf" value="tok123" />
+				</form>
+			</body></html>`))
+		case "/auth":
+			_ = r.ParseForm()
+			if r.FormValue("username") == "alice" && r.FormValue("password") == "secret" && r.FormValue("csrf") == "tok123" {
+				http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
+				w.Write([]byte(`<html><body>OK</body></html>`))
+				return
+			}
+			w.Write([]byte(`<html><body><div class="error">bad</div></body></html>`))
+		default:
+			w.Write([]byte(`<html><body><div class="error">wrong path: ` + r.URL.Path + `</div></body></html>`))
+		}
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method: "form",
+			Login:  "/login-page",
+			Form:   "#login-form",
+			Inputs: map[string]string{
+				"username": "{{ .Config.username }}",
+				"password": "{{ .Config.password }}",
+			},
+			SelectorInputs: map[string]cmodel.SelectorField{
+				"csrf": {Selector: "input[name=csrf]", Attribute: "value"},
+			},
+			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{
+		"username": "alice",
+		"password": "secret",
+	})
+	if err != nil {
+		t.Fatalf("expected successful login with form selector, got error: %v", err)
+	}
+}
+
+func TestLogin_FormSelectorNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<html><body>
+			<form id="register" action="/register">
+				<input name="email" />
+			</form>
+		</body></html>`))
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method: "form",
+			Login:  "/login-page",
+			Form:   "#nonexistent",
+			Inputs: map[string]string{
+				"username": "user",
+				"password": "pass",
+			},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{
+		"username": "user",
+		"password": "pass",
+	})
+	if err == nil {
+		t.Fatal("expected error for unmatched form selector")
+	}
+}
+
+func TestLogin_FormSelectorEmpty(t *testing.T) {
+	// Same as TestLogin_FormSuccess but with explicit empty Form field
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			_ = r.ParseForm()
+			if r.FormValue("username") == "alice" && r.FormValue("password") == "secret" {
+				http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
+				w.Write([]byte(`<html><body>OK</body></html>`))
+				return
+			}
+			w.Write([]byte(`<html><body><div class="error">bad</div></body></html>`))
+		case "/profile":
+			if _, err := r.Cookie("session"); err == nil {
+				w.Write([]byte(`<html><body><div class="logged-in">OK</div></body></html>`))
+				return
+			}
+			w.Write([]byte(`<html><body>Not logged in</body></html>`))
+		}
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method: "form",
+			Login:  "/login",
+			Form:   "",
+			Inputs: map[string]string{
+				"username": "{{ .Config.username }}",
+				"password": "{{ .Config.password }}",
+			},
+			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
+			Test:  &cmodel.Test{Path: "/profile", Selector: "div.logged-in"},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{
+		"username": "alice",
+		"password": "secret",
+	})
+	if err != nil {
+		t.Fatalf("expected successful login with empty Form, got error: %v", err)
+	}
+}
+
+func TestLogin_FormWithSubmitPathOverride(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login-page":
+			w.Write([]byte(`<html><body>
+				<form id="login-form" action="/auth">
+					<input name="username" />
+					<input name="password" />
+				</form>
+			</body></html>`))
+		case "/override-submit":
+			_ = r.ParseForm()
+			if r.FormValue("username") == "alice" && r.FormValue("password") == "secret" {
+				http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
+				w.Write([]byte(`<html><body>OK</body></html>`))
+				return
+			}
+			w.Write([]byte(`<html><body><div class="error">bad</div></body></html>`))
+		default:
+			w.Write([]byte(`<html><body><div class="error">wrong path: ` + r.URL.Path + `</div></body></html>`))
+		}
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method:     "form",
+			Login:      "/login-page",
+			Form:       "#login-form",
+			SubmitPath: "/override-submit",
+			Inputs: map[string]string{
+				"username": "{{ .Config.username }}",
+				"password": "{{ .Config.password }}",
+			},
+			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{
+		"username": "alice",
+		"password": "secret",
+	})
+	if err != nil {
+		t.Fatalf("expected SubmitPath to override form action, got error: %v", err)
+	}
+}
