@@ -1,6 +1,9 @@
 package filters
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestApply_Pipeline(t *testing.T) {
 	cases := []struct {
@@ -226,6 +229,75 @@ func TestValidate(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("validate(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAndMatch_FieldLevelError(t *testing.T) {
+	_, err := Apply("test value", []Step{{Name: "andmatch"}})
+	if err == nil {
+		t.Fatal("expected error when andmatch used in field-level")
+	}
+	if !strings.Contains(err.Error(), "row-level filter") {
+		t.Errorf("expected row-level error message, got: %v", err)
+	}
+}
+
+func TestJsonParse_NestedPath(t *testing.T) {
+	tests := []struct {
+		name   string
+		json   string
+		path   string
+		want   string
+	}{
+		{"flat field", `{"title":"Ubuntu"}`, "title", "Ubuntu"},
+		{"nested path", `{"result":{"data":{"title":"Ubuntu"}}}`, "result.data.title", "Ubuntu"},
+		{"array index", `{"items":[{"name":"a"},{"name":"b"}]}`, "items.0.name", "a"},
+		{"missing path", `{"title":"Ubuntu"}`, "missing", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Apply(tt.json, []Step{{Name: "jsonparse", Args: []string{tt.path}}})
+			if tt.want == "" {
+				if err == nil {
+					t.Fatal("expected error for missing path")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("jsonparse error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("jsonparse(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFuzzyTime_OrdinalSuffixes(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"1st", "Jan 1st '26", false},
+		{"2nd", "Jan 2nd '26", false},
+		{"3rd", "Jan 3rd '26", false},
+		{"21st", "Jan 21st '26", false},
+		{"22nd", "Jan 22nd '26", false},
+		{"23rd", "Jan 23rd '26", false},
+		{"28th with time", "Jul. 28th '26 09:20", false},
+		{"no suffix", "Jan 5 '26", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Apply(tt.value, []Step{{Name: "fuzzytime"}})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("fuzzytime error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && got == "" {
+				t.Error("fuzzytime returned empty string")
 			}
 		})
 	}

@@ -1,8 +1,8 @@
 // Package login implémente le moteur d'authentification Cardigann :
-// méthodes `form`, `cookie` et `get` supportées (`oneurl` reporté en
-// post-MVP). Le résultat d'un login réussi est simplement les cookies
-// posés sur le *http.Client fourni (généralement un httpclient.IndexerClient
-// avec persistance SQLite en amont).
+// méthodes `form`, `cookie`, `get` et `oneurl` supportées. Le résultat
+// d'un login réussi est simplement les cookies posés sur le *http.Client
+// fourni (généralement un httpclient.IndexerClient avec persistance SQLite
+// en amont).
 package login
 
 import (
@@ -17,6 +17,7 @@ import (
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
 	"github.com/Kcchouette/cardigann-go/selector"
 	tmpl "github.com/Kcchouette/cardigann-go/template"
+	"github.com/Kcchouette/cardigann-go/template/filters"
 )
 
 // ErrLoginFailed est retourné quand l'indexeur signale explicitement un échec
@@ -40,9 +41,10 @@ func Login(ctx context.Context, client *http.Client, def cmodel.IndexerDefinitio
 		return loginForm(ctx, client, def, baseURL, config)
 	case "get":
 		return loginGet(ctx, client, def, baseURL, config)
+	case "oneurl":
+		return loginOneURL(ctx, client, def, baseURL, config)
 	default:
-		// get/oneurl : post-MVP (cf. plan Slice C).
-		return fmt.Errorf("login method %q not supported yet (post-MVP)", def.Login.Method)
+		return fmt.Errorf("login method %q not supported yet", def.Login.Method)
 	}
 }
 
@@ -84,6 +86,12 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 	}
 	loginURL := resolveURL(baseURL, loginPath)
 
+	// Extract dynamic values from the login page (CSRF tokens, etc.)
+	extracted, err := extractSelectorInputs(ctx, client, def, baseURL, rctx)
+	if err != nil {
+		return fmt.Errorf("extracting selector inputs: %w", err)
+	}
+
 	values := url.Values{}
 	for name, valueTmpl := range def.Login.Inputs {
 		rendered, err := tmpl.Render(valueTmpl, rctx)
@@ -91,6 +99,10 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 			return fmt.Errorf("rendering login input %q: %w", name, err)
 		}
 		values.Set(name, rendered)
+	}
+	// Merge extracted values (they override static inputs if same key)
+	for k, v := range extracted {
+		values.Set(k, v)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(values.Encode()))
@@ -118,6 +130,72 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 		return verifyTest(ctx, client, baseURL, *def.Login.Test)
 	}
 	return nil
+}
+
+// extractSelectorInputs fetches the login page via GET and extracts values
+// from HTML using the configured selectorinputs (CSRF tokens, hidden fields, etc.).
+func extractSelectorInputs(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, rctx tmpl.Context) (map[string]string, error) {
+	if len(def.Login.SelectorInputs) == 0 {
+		return nil, nil
+	}
+
+	loginPath, err := tmpl.Render(def.Login.Login, rctx)
+	if err != nil {
+		return nil, fmt.Errorf("rendering login path: %w", err)
+	}
+	loginURL := resolveURL(baseURL, loginPath)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, loginURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching login page: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, err
+	}
+
+	doc, err := selector.NewHTMLDocument(string(body))
+	if err != nil {
+		return nil, nil // non-HTML, skip
+	}
+
+	result := make(map[string]string)
+	for name, sel := range def.Login.SelectorInputs {
+		nodes, err := doc.Find(sel.Selector)
+		if err != nil || len(nodes) == 0 {
+			if sel.Optional {
+				continue
+			}
+			continue // skip missing selectors gracefully
+		}
+		var raw string
+		if sel.Attribute != "" {
+			raw, _ = nodes[0].Attr(sel.Attribute)
+		} else {
+			raw = nodes[0].Text()
+		}
+		if sel.Text != "" {
+			raw = sel.Text
+		}
+		if len(sel.Filters) > 0 {
+			steps := make([]filters.Step, len(sel.Filters))
+			for i, f := range sel.Filters {
+				steps[i] = filters.Step{Name: f.Name, Args: f.Args}
+			}
+			raw, err = filters.Apply(raw, steps)
+			if err != nil {
+				continue
+			}
+		}
+		result[name] = raw
+	}
+	return result, nil
 }
 
 // loginGet effectue un login par requête GET : les inputs déclarés sont envoyés
@@ -171,30 +249,50 @@ func loginGet(ctx context.Context, client *http.Client, def cmodel.IndexerDefini
 	return nil
 }
 
+// loginOneURL effectue un login par une simple requête GET vers l'URL de login
+// sans aucun paramètre d'entrée. Utile pour les indexeurs qui utilisent un
+// cookie ou un token passé directement dans l'URL.
+func loginOneURL(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
+	rctx := tmpl.Context{Config: config}
+
+	loginPath, err := tmpl.Render(def.Login.Login, rctx)
+	if err != nil {
+		return fmt.Errorf("rendering login path: %w", err)
+	}
+	loginURL := resolveURL(baseURL, loginPath)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, loginURL, nil)
+	if err != nil {
+		return fmt.Errorf("building login request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("login request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return fmt.Errorf("reading login response: %w", err)
+	}
+
+	if err := checkLoginErrors(string(body), def.Login.Error); err != nil {
+		return err
+	}
+
+	if def.Login.Test != nil && def.Login.Test.Path != "" {
+		return verifyTest(ctx, client, baseURL, *def.Login.Test)
+	}
+	return nil
+}
+
 // checkLoginErrors inspecte le corps de la réponse de login à la recherche
 // des sélecteurs `login.error` : leur présence signale un échec d'authentification.
 func checkLoginErrors(body string, errorSelectors []cmodel.ErrorSelector) error {
-	if len(errorSelectors) == 0 {
-		return nil
-	}
-	doc, err := selector.NewHTMLDocument(body)
+	err := selector.CheckErrors(body, errorSelectors)
 	if err != nil {
-		return nil // corps non-HTML : on ne peut pas vérifier, on suppose un succès.
-	}
-	for _, es := range errorSelectors {
-		nodes, err := doc.Find(es.Selector)
-		if err != nil || len(nodes) == 0 {
-			continue
-		}
-		msg := "login error detected"
-		if es.Message.Selector != "" {
-			if msgNodes, err := doc.Find(es.Message.Selector); err == nil && len(msgNodes) > 0 {
-				msg = msgNodes[0].Text()
-			}
-		} else {
-			msg = nodes[0].Text()
-		}
-		return &ErrLoginFailed{Reason: msg}
+		return &ErrLoginFailed{Reason: err.Error()}
 	}
 	return nil
 }

@@ -6,16 +6,19 @@ package template
 import (
 	"bytes"
 	"fmt"
+	"net/url"
 	"strings"
 	"text/template"
 )
 
 // Context est le contexte de rendu exposé aux templates Cardigann.
 type Context struct {
-	Config   map[string]string // valeurs de configuration utilisateur (settings)
-	Keywords string            // termes de recherche bruts
-	Query    map[string]string // paramètres de requête additionnels (catégories, saison, etc.)
-	Result   map[string]string // valeurs déjà extraites pour la ligne de résultat courante
+	Config      map[string]string // valeurs de configuration utilisateur (settings)
+	Keywords    string            // termes de recherche bruts
+	Categories  []string          // IDs native des catégories mappées depuis les Newznab IDs
+	Query       map[string]string // paramètres de requête additionnels (catégories, saison, etc.)
+	Result      map[string]string // valeurs déjà extraites pour la ligne de résultat courante
+	DownloadUri *url.URL          // URL de téléchargement résolue (utilisable dans les templates)
 }
 
 // Render exécute tmplStr comme un template Cardigann avec le contexte donné et

@@ -8,7 +8,6 @@
 package filters
 
 import (
-	"encoding/json"
 	"fmt"
 	"html"
 	"net/url"
@@ -18,6 +17,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/tidwall/gjson"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -212,26 +212,18 @@ func jsonParse(v string, args []string) (string, error) {
 	if len(args) < 1 {
 		return "", fmt.Errorf("jsonparse requires 1 arg (field path)")
 	}
-	var data map[string]any
-	if err := json.Unmarshal([]byte(v), &data); err != nil {
-		return "", fmt.Errorf("invalid json: %w", err)
+	result := gjson.Get(v, args[0])
+	if !result.Exists() {
+		return "", fmt.Errorf("jsonparse: path %q not found", args[0])
 	}
-	val, ok := data[args[0]]
-	if !ok {
-		return "", fmt.Errorf("jsonparse: field %q not found", args[0])
-	}
-	return fmt.Sprintf("%v", val), nil
+	return result.String(), nil
 }
 
-// andMatch vérifie que tous les mots-clés de la recherche sont présents
-// dans la valeur. C'est un filtre row-level : la valeur est le texte de la ligne.
-// Retourne la valeur inchangée si tous les mots-clés sont trouvés, erreur sinon.
+// andMatch est un filtre row-level qui vérifie que tous les mots-clés sont
+// présents dans la valeur. Il ne peut pas être utilisé en field-level car
+// il nécessite les mots-clés de la recherche (passés via ApplyAndMatch).
 func andMatch(v string, args []string) (string, error) {
-	_ = args
-	// Keywords is passed via Step.Keywords, but this function signature
-	// matches FilterFunc. The actual keywords lookup happens in ApplyRowFilters.
-	// When called via Apply(), keywords is empty and we pass through.
-	return v, nil
+	return "", fmt.Errorf("andmatch is a row-level filter and cannot be used in field filters; use it in rows.filters instead")
 }
 
 // ApplyAndMatch vérifie que tous les mots-clés sont présents dans la valeur.
@@ -319,20 +311,39 @@ func fuzzyTime(v string, _ []string) (string, error) {
 		}
 	}
 
-	// Try fuzzy formats: "Jul. 28th '26 09:20", "Jan 5 '26", etc.
+	// Strip ordinal suffixes (st, nd, rd, th) and retry.
+	stripped := stripOrdinalSuffixes(v)
+	if stripped != v {
+		for _, layout := range dateLayouts {
+			if t, err := time.Parse(layout, stripped); err == nil {
+				return t.Format(time.RFC3339), nil
+			}
+		}
+	}
+
+	// Try fuzzy formats with stripped input: "Jan 2 '06 15:04", "Jan 2 '06", etc.
 	fuzzyLayouts := []string{
-		"Jan. 2th '06 15:04",
-		"Jan. 2th '06",
-		"Jan 2th '06 15:04",
-		"Jan 2th '06",
+		"Jan 2 '06 15:04",
+		"Jan 2 '06",
+		"Jan. 2 '06 15:04",
+		"Jan. 2 '06",
+		"2 Jan 2006 15:04",
+		"2 Jan 2006",
 	}
 	for _, layout := range fuzzyLayouts {
-		if t, err := time.Parse(layout, original); err == nil {
+		if t, err := time.Parse(layout, stripped); err == nil {
 			return t.Format(time.RFC3339), nil
 		}
 	}
 
 	return "", fmt.Errorf("fuzzytime: cannot parse %q", original)
+}
+
+// stripOrdinalSuffixes supprime les suffixes ordinaux (st, nd, rd, th) d'une chaîne.
+// Ex: "Jan 1st '26" → "Jan 1 '26", "Jul. 28th '26" → "Jul. 28 '26"
+func stripOrdinalSuffixes(s string) string {
+	re := regexp.MustCompile(`(\d)(st|nd|rd|th)\b`)
+	return re.ReplaceAllString(s, "$1")
 }
 
 // diacritics supprime les diacritiques (accents, cédilles, etc.) d'une chaîne.

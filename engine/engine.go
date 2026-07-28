@@ -22,12 +22,22 @@ import (
 	"github.com/Kcchouette/cardigann-go/selector"
 	tmpl "github.com/Kcchouette/cardigann-go/template"
 	"github.com/Kcchouette/cardigann-go/template/filters"
+	"golang.org/x/time/rate"
 )
 
 // Query représente une recherche Cardigann générique.
 type Query struct {
-	Keywords   string
-	Categories []int
+	Keywords    string
+	Categories  []int
+	IMDBID      string
+	IMDBIDShort string
+	TMDBID      string
+	TVDBID      string
+	DoubanID    string
+	Season      string
+	Ep          string
+	Year        string
+	Genre       string
 }
 
 // Provider exécute une IndexerDefinition Cardigann comme fournisseur de recherche.
@@ -43,20 +53,26 @@ type Provider struct {
 	// première requête de recherche.
 	Client *httpclient.IndexerClient
 
-	loginOnce   sync.Once
-	loginErr    error
+	loginOnce    sync.Once
+	loginErr     error
 	lastKeywords string
+	limiter      *rate.Limiter
 }
 
 // NewProvider construit un Provider Cardigann prêt à l'emploi, sans gestion
 // de session/login (utile pour les indexeurs publics ou les tests).
+// Si def.RequestDelay > 0, un rate limiter est créé pour espacer les requêtes.
 func NewProvider(def cmodel.IndexerDefinition, baseURL string, config map[string]string) *Provider {
-	return &Provider{
+	p := &Provider{
 		Def:        def,
 		BaseURL:    baseURL,
 		Config:     config,
 		HTTPClient: &http.Client{Timeout: 20 * time.Second},
 	}
+	if def.RequestDelay > 0 {
+		p.limiter = rate.NewLimiter(rate.Every(time.Duration(def.RequestDelay*float64(time.Second))), 1)
+	}
+	return p
 }
 
 // NewAuthenticatedProvider construit un Provider Cardigann relié à un
@@ -83,10 +99,16 @@ func (p *Provider) Protocol() release.Protocol {
 
 // httpClient retourne le client HTTP effectif (IndexerClient prioritaire),
 // après avoir garanti que le login (le cas échéant) a été effectué une fois.
+// Si un rate limiter est configuré (via RequestDelay), la requête est espacée.
 func (p *Provider) httpClient(ctx context.Context) (interface {
 	Do(*http.Request) (*http.Response, error)
 }, error) {
 	if p.Client == nil {
+		if p.limiter != nil {
+			if err := p.limiter.Wait(ctx); err != nil {
+				return nil, fmt.Errorf("rate limiter: %w", err)
+			}
+		}
 		return p.HTTPClient, nil
 	}
 	p.loginOnce.Do(func() {
@@ -113,14 +135,37 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 	}
 	p.lastKeywords = keywords
 
+	// Map Newznab category IDs to native tracker category IDs.
+	mappedCategories := mapCategories(q.Categories, p.Def.Caps.CategoryMappings)
+
 	rctx := tmpl.Context{
-		Config:   p.Config,
-		Keywords: keywords,
-		Query:    map[string]string{"Keywords": keywords},
+		Config:     p.Config,
+		Keywords:   keywords,
+		Categories: mappedCategories,
+		Query: map[string]string{
+			"Keywords":    keywords,
+			"q":           keywords,
+			"IMDBID":      q.IMDBID,
+			"IMDBIDShort": q.IMDBIDShort,
+			"TMDBID":      q.TMDBID,
+			"TVDBID":      q.TVDBID,
+			"DoubanID":    q.DoubanID,
+			"Season":      q.Season,
+			"Ep":          q.Ep,
+			"Year":        q.Year,
+			"Genre":       q.Genre,
+		},
+	}
+	if len(mappedCategories) > 0 {
+		rctx.Query["categories"] = strings.Join(mappedCategories, ",")
 	}
 
 	var all []release.Release
 	for _, path := range p.Def.Search.Paths {
+		// Skip paths whose Categories list has no intersection with requested categories.
+		if len(path.Categories) > 0 && !categoriesIntersect(path.Categories, q.Categories) {
+			continue
+		}
 		releases, err := p.searchPath(ctx, path, rctx)
 		if err != nil {
 			return nil, fmt.Errorf("search path %q: %w", path.Path, err)
@@ -128,6 +173,56 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 		all = append(all, releases...)
 	}
 	return all, nil
+}
+
+// mapCategories converts Newznab category IDs to native tracker category IDs
+// using the definition's category mappings.
+func mapCategories(newznabIDs []int, mappings []cmodel.CategoryMapping) []string {
+	if len(newznabIDs) == 0 || len(mappings) == 0 {
+		return nil
+	}
+	// Build a set of Newznab IDs for fast lookup.
+	nzSet := make(map[int]struct{}, len(newznabIDs))
+	for _, id := range newznabIDs {
+		nzSet[id] = struct{}{}
+	}
+	var result []string
+	for _, m := range mappings {
+		catNum := 0
+		for _, r := range m.Cat {
+			if r >= '0' && r <= '9' {
+				catNum = catNum*10 + int(r-'0')
+			} else {
+				catNum = 0
+				break
+			}
+		}
+		if catNum == 0 {
+			continue
+		}
+		if _, ok := nzSet[catNum]; ok {
+			result = append(result, m.ID)
+		}
+	}
+	return result
+}
+
+// categoriesIntersect returns true if any native ID from the path is in the
+// requested Newznab IDs (both as ints).
+func categoriesIntersect(pathCategories, requested []int) bool {
+	if len(requested) == 0 {
+		return true
+	}
+	set := make(map[int]struct{}, len(requested))
+	for _, id := range requested {
+		set[id] = struct{}{}
+	}
+	for _, id := range pathCategories {
+		if _, ok := set[id]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx tmpl.Context) ([]release.Release, error) {
@@ -196,10 +291,14 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 		return nil, fmt.Errorf("http status %d", resp.StatusCode)
 	}
 
-	return p.parseResults(string(body), path.Response.Type)
+	if err := selector.CheckErrors(string(body), p.Def.Search.Error); err != nil {
+		return nil, fmt.Errorf("search error: %w", err)
+	}
+
+	return p.parseResults(ctx, string(body), path.Response.Type, rctx)
 }
 
-func (p *Provider) parseResults(body string, responseType string) ([]release.Release, error) {
+func (p *Provider) parseResults(ctx context.Context, body string, responseType string, rctx tmpl.Context) ([]release.Release, error) {
 	var doc selector.Document
 	var err error
 	switch responseType {
@@ -252,11 +351,13 @@ func (p *Provider) parseResults(body string, responseType string) ([]release.Rel
 	}
 
 	releases := make([]release.Release, 0, len(rows))
+	var extractErr error
 	for _, row := range rows {
-		release, err := p.extractRelease(row)
+		release, err := p.extractRelease(ctx, row, rctx)
 		if err != nil {
-			// Un champ requis manquant/erreur d'extraction ne doit pas faire
-			// échouer toute la recherche : la ligne est simplement ignorée.
+			if extractErr == nil {
+				extractErr = err
+			}
 			continue
 		}
 		release.IndexerID = p.Def.ID
@@ -264,10 +365,13 @@ func (p *Provider) parseResults(body string, responseType string) ([]release.Rel
 		release.Protocol = p.Protocol()
 		releases = append(releases, release)
 	}
+	if len(releases) == 0 && extractErr != nil {
+		return nil, fmt.Errorf("no releases extracted (last error: %w)", extractErr)
+	}
 	return releases, nil
 }
 
-func (p *Provider) extractRelease(row selector.Node) (release.Release, error) {
+func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx tmpl.Context) (release.Release, error) {
 	values := make(map[string]string, len(p.Def.Search.Fields))
 
 	// Implémentation minimale (Slice B) : les sélecteurs de champs sont
@@ -319,7 +423,32 @@ func (p *Provider) extractRelease(row selector.Node) (release.Release, error) {
 		values[name] = filtered
 	}
 
-	return fieldsToRelease(values)
+	rel, err := fieldsToRelease(values)
+	if err != nil {
+		return release.Release{}, err
+	}
+
+	// Resolve download link via download block if defined
+	if p.Def.Download != nil {
+		client, clientErr := p.httpClient(ctx)
+		if clientErr == nil {
+			dlResult, dlErr := p.resolveDownload(ctx, client, row, p.BaseURL, rctx)
+			if dlErr == nil && dlResult != nil {
+				if dlResult.URL != "" {
+					rel.DownloadLink = dlResult.URL
+				}
+				if dlResult.InfoHash != "" {
+					rel.InfoHash = dlResult.InfoHash
+				}
+				if dlResult.Title != "" {
+					rel.Title = dlResult.Title
+				}
+			}
+		}
+		// If resolveDownload fails, fall back to the raw field value already in rel.DownloadLink
+	}
+
+	return rel, nil
 }
 
 func toFilterSteps(steps []cmodel.FilterStep) []filters.Step {
@@ -361,4 +490,299 @@ func fieldsToRelease(values map[string]string) (release.Release, error) {
 		}
 	}
 	return release, nil
+}
+
+// downloadResult holds the resolved download information.
+type downloadResult struct {
+	URL      string
+	InfoHash string
+	Title    string
+}
+
+// resolveDownload résout le lien réel de téléchargement à partir de la définition
+// download de la ligne. Si aucun download n'est défini, retourne nil.
+func (p *Provider) resolveDownload(ctx context.Context, client interface {
+	Do(*http.Request) (*http.Response, error)
+}, row selector.Node, baseURL string, rctx tmpl.Context) (*downloadResult, error) {
+	dl := p.Def.Download
+	if dl == nil {
+		return nil, nil
+	}
+
+	var beforeResponse string
+	var downloadURL string
+
+	if dl.Before != nil {
+		var beforeURL string
+		if dl.Before.PathSelector != nil {
+			extracted, err := extractSelectorField(row, dl.Before.PathSelector)
+			if err != nil {
+				return nil, fmt.Errorf("before pathselector: %w", err)
+			}
+			if strings.HasPrefix(extracted, "http://") || strings.HasPrefix(extracted, "https://") {
+				beforeURL = extracted
+			} else {
+				beforeURL = strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(extracted, "/")
+			}
+		} else if dl.Before.Path != "" {
+			rendered, err := tmpl.Render(dl.Before.Path, rctx)
+			if err != nil {
+				return nil, fmt.Errorf("rendering before path: %w", err)
+			}
+			if strings.HasPrefix(rendered, "http://") || strings.HasPrefix(rendered, "https://") {
+				beforeURL = rendered
+			} else {
+				beforeURL = strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(rendered, "/")
+			}
+		}
+
+		if beforeURL != "" {
+			method := strings.ToUpper(dl.Before.Method)
+			if method == "" {
+				method = http.MethodGet
+			}
+
+			var req *http.Request
+			if method == http.MethodPost {
+				values := url.Values{}
+				for k, v := range dl.Before.Inputs {
+					rendered, err := tmpl.Render(v, rctx)
+					if err != nil {
+						return nil, fmt.Errorf("rendering before input %q: %w", k, err)
+					}
+					values.Set(k, rendered)
+				}
+				var err error
+				req, err = http.NewRequestWithContext(ctx, method, beforeURL, strings.NewReader(values.Encode()))
+				if err != nil {
+					return nil, fmt.Errorf("creating before request: %w", err)
+				}
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			} else {
+				u, err := url.Parse(beforeURL)
+				if err != nil {
+					return nil, fmt.Errorf("invalid before url %q: %w", beforeURL, err)
+				}
+				values := u.Query()
+				for k, v := range dl.Before.Inputs {
+					rendered, err := tmpl.Render(v, rctx)
+					if err != nil {
+						return nil, fmt.Errorf("rendering before input %q: %w", k, err)
+					}
+					values.Set(k, rendered)
+				}
+				u.RawQuery = values.Encode()
+				req, err = http.NewRequestWithContext(ctx, method, u.String(), nil)
+				if err != nil {
+					return nil, fmt.Errorf("creating before request: %w", err)
+				}
+			}
+
+			if dl.Headers != nil {
+				for header, vals := range dl.Headers {
+					for _, v := range vals {
+						req.Header.Add(header, v)
+					}
+				}
+			}
+
+			resp, err := client.Do(req)
+			if err != nil {
+				return nil, fmt.Errorf("before request: %w", err)
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+			if err != nil {
+				return nil, fmt.Errorf("reading before response: %w", err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				return nil, fmt.Errorf("before request status %d", resp.StatusCode)
+			}
+			beforeResponse = string(body)
+		}
+	}
+
+	// Extract download URL from selectors
+	if len(dl.Selectors) > 0 {
+		for _, sel := range dl.Selectors {
+			if sel.UseBeforeResponse && beforeResponse != "" {
+				doc, err := selector.NewHTMLDocument(beforeResponse)
+				if err != nil {
+					return nil, fmt.Errorf("parsing before response: %w", err)
+				}
+				nodes, err := doc.Find(sel.Selector)
+				if err != nil || len(nodes) == 0 {
+					return nil, fmt.Errorf("before response selector %q matched nothing", sel.Selector)
+				}
+				target := nodes[0]
+				if sel.Attribute != "" {
+					raw, ok := target.Attr(sel.Attribute)
+					if !ok {
+						return nil, fmt.Errorf("before response attribute %q not found", sel.Attribute)
+					}
+					downloadURL = raw
+				} else {
+					downloadURL = target.Text()
+				}
+			} else {
+				extracted, err := extractSelectorFromNode(row, sel.Selector, sel.Attribute)
+				if err != nil {
+					return nil, fmt.Errorf("selector %q: %w", sel.Selector, err)
+				}
+				downloadURL = extracted
+			}
+
+			if len(sel.Filters) > 0 {
+				filtered, err := filters.Apply(downloadURL, toFilterSteps(sel.Filters))
+				if err != nil {
+					return nil, fmt.Errorf("applying filters to selector: %w", err)
+				}
+				downloadURL = filtered
+			}
+
+			if downloadURL != "" {
+				break
+			}
+		}
+	} else if beforeResponse != "" {
+		doc, err := selector.NewHTMLDocument(beforeResponse)
+		if err == nil {
+			for _, sel := range []string{"a[href*='download']", "a[href*='torrent']", "a[href*='.torrent']"} {
+				nodes, err := doc.Find(sel)
+				if err == nil && len(nodes) > 0 {
+					if href, ok := nodes[0].Attr("href"); ok {
+						downloadURL = href
+						break
+					}
+				}
+			}
+		}
+	}
+
+	result := &downloadResult{URL: downloadURL}
+
+	// Handle infohash extraction
+	if dl.Infohash != nil {
+		var infohashSource selector.Node
+		if dl.Infohash.UseBeforeResponse && beforeResponse != "" {
+			doc, err := selector.NewHTMLDocument(beforeResponse)
+			if err != nil {
+				return nil, fmt.Errorf("parsing before response for infohash: %w", err)
+			}
+			nodes, err := doc.Find(dl.Infohash.Hash.Selector)
+			if err != nil || len(nodes) == 0 {
+				return nil, fmt.Errorf("infohash hash selector %q matched nothing", dl.Infohash.Hash.Selector)
+			}
+			infohashSource = nodes[0]
+		} else {
+			infohashSource = row
+		}
+
+		hash, err := extractSelectorField(infohashSource, &dl.Infohash.Hash)
+		if err != nil {
+			return nil, fmt.Errorf("infohash hash: %w", err)
+		}
+		result.InfoHash = hash
+
+		if dl.Infohash.Title.Selector != "" {
+			title, err := extractSelectorField(infohashSource, &dl.Infohash.Title)
+			if err == nil && title != "" {
+				result.Title = title
+			}
+		}
+	}
+
+	// If no URL found, check if the before-response is a redirect URL
+	if downloadURL == "" && beforeResponse != "" {
+		trimmed := strings.TrimSpace(beforeResponse)
+		if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
+			result.URL = trimmed
+		}
+	}
+
+	return result, nil
+}
+
+// extractSelectorField extrait une valeur d'un noeud en utilisant un SelectorField.
+func extractSelectorField(node selector.Node, sf *cmodel.SelectorField) (string, error) {
+	if sf == nil {
+		return "", nil
+	}
+
+	if sf.Text != "" {
+		raw := sf.Text
+		filtered, err := filters.Apply(raw, toFilterSteps(sf.Filters))
+		if err != nil {
+			return "", fmt.Errorf("applying filters: %w", err)
+		}
+		return filtered, nil
+	}
+
+	if sf.Selector == "" {
+		return "", nil
+	}
+
+	sub, isSub := node.(selector.SubSelectable)
+	if !isSub {
+		return "", fmt.Errorf("node does not support Find")
+	}
+
+	nodes, err := sub.Find(sf.Selector)
+	if err != nil {
+		return "", fmt.Errorf("selector %q: %w", sf.Selector, err)
+	}
+	if len(nodes) == 0 {
+		if sf.Optional {
+			return "", nil
+		}
+		return "", fmt.Errorf("selector %q matched nothing", sf.Selector)
+	}
+
+	target := nodes[0]
+	var raw string
+	var ok bool
+	if sf.Attribute != "" {
+		raw, ok = target.Attr(sf.Attribute)
+		if !ok {
+			if sf.Optional {
+				return "", nil
+			}
+			return "", fmt.Errorf("attribute %q not found", sf.Attribute)
+		}
+	} else {
+		raw = target.Text()
+	}
+
+	filtered, err := filters.Apply(raw, toFilterSteps(sf.Filters))
+	if err != nil {
+		return "", fmt.Errorf("applying filters: %w", err)
+	}
+	return filtered, nil
+}
+
+// extractSelectorFromNode extrait une valeur d'un noeud en utilisant un sélecteur et un attribut.
+func extractSelectorFromNode(node selector.Node, selectorStr, attribute string) (string, error) {
+	sub, isSub := node.(selector.SubSelectable)
+	if !isSub {
+		return "", fmt.Errorf("node does not support Find")
+	}
+
+	nodes, err := sub.Find(selectorStr)
+	if err != nil {
+		return "", fmt.Errorf("selector %q: %w", selectorStr, err)
+	}
+	if len(nodes) == 0 {
+		return "", fmt.Errorf("selector %q matched nothing", selectorStr)
+	}
+
+	target := nodes[0]
+	if attribute != "" {
+		raw, ok := target.Attr(attribute)
+		if !ok {
+			return "", fmt.Errorf("attribute %q not found", attribute)
+		}
+		return raw, nil
+	}
+	return target.Text(), nil
 }

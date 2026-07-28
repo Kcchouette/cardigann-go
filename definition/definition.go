@@ -101,12 +101,16 @@ type Setting struct {
 
 // Login décrit le mécanisme d'authentification de l'indexeur.
 type Login struct {
-	Method    string            `yaml:"method"` // form | cookie | get | oneurl
-	Login     string            `yaml:"login"`
-	Inputs    map[string]string `yaml:"inputs"`
-	Selectors map[string]string `yaml:"selectors"`
-	Error     []ErrorSelector   `yaml:"error"`
-	Test      *Test             `yaml:"test,omitempty"`
+	Method         string                   `yaml:"method"`
+	Login          string                   `yaml:"login"`
+	Inputs         map[string]string        `yaml:"inputs"`
+	SelectorInputs map[string]SelectorField `yaml:"selectorinputs,omitempty"`
+	Form           string                   `yaml:"form,omitempty"`
+	Error          []ErrorSelector          `yaml:"error"`
+	Test           *Test                    `yaml:"test,omitempty"`
+	Headers        map[string]string        `yaml:"headers,omitempty"`
+	Cookies        map[string]string        `yaml:"cookies,omitempty"`
+	SubmitPath     string                   `yaml:"submitpath,omitempty"`
 }
 
 // ErrorSelector décrit un sélecteur permettant de détecter un échec de login.
@@ -137,10 +141,11 @@ type Search struct {
 
 // SearchPath décrit un template d'URL/paramètres de requête de recherche.
 type SearchPath struct {
-	Path     string            `yaml:"path"`
-	Method   string            `yaml:"method"` // get | post
-	Inputs   map[string]string `yaml:"inputs"`
-	Response ResponseInfo      `yaml:"response"`
+	Path       string            `yaml:"path"`
+	Method     string            `yaml:"method"` // get | post
+	Inputs     map[string]string `yaml:"inputs"`
+	Response   ResponseInfo      `yaml:"response"`
+	Categories []int             `yaml:"categories,omitempty"`
 }
 
 // ResponseInfo décrit le type de contenu attendu de la réponse (html par défaut, json, xml).
@@ -171,14 +176,43 @@ type FilterStep struct {
 	Args []string `yaml:"args"`
 }
 
+// SelectorField décrit un sélecteur CSS avec extraction d'attribut et filtres.
+type SelectorField struct {
+	Selector  string       `yaml:"selector"`
+	Attribute string       `yaml:"attribute,omitempty"`
+	Text      string       `yaml:"text,omitempty"`
+	Optional  bool         `yaml:"optional,omitempty"`
+	Filters   []FilterStep `yaml:"filters,omitempty"`
+}
+
 // Download décrit comment résoudre le lien réel de téléchargement (torrent/nzb) à partir d'une ligne.
 type Download struct {
 	Selectors []DownloadSelector `yaml:"selectors,omitempty"`
 	Method    string             `yaml:"method,omitempty"`
+	Before    *DownloadBefore    `yaml:"before,omitempty"`
+	Headers   map[string][]string `yaml:"headers,omitempty"`
+	Infohash  *DownloadInfohash  `yaml:"infohash,omitempty"`
+}
+
+// DownloadBefore décrit une requête intermédiaire à effectuer avant d'extraire le lien réel.
+type DownloadBefore struct {
+	Path         string            `yaml:"path"`
+	Method       string            `yaml:"method"`
+	Inputs       map[string]string `yaml:"inputs"`
+	PathSelector *SelectorField    `yaml:"pathselector,omitempty"`
+}
+
+// DownloadInfohash décrit comment extraire le hash et le titre d'un torrent.
+type DownloadInfohash struct {
+	UseBeforeResponse bool          `yaml:"usebeforeresponse,omitempty"`
+	Hash              SelectorField `yaml:"hash"`
+	Title             SelectorField `yaml:"title,omitempty"`
 }
 
 // DownloadSelector décrit une étape de résolution du lien de téléchargement (ex: suivre une page intermédiaire).
 type DownloadSelector struct {
-	Selector  string `yaml:"selector"`
-	Attribute string `yaml:"attribute"`
+	Selector          string       `yaml:"selector"`
+	Attribute         string       `yaml:"attribute,omitempty"`
+	UseBeforeResponse bool         `yaml:"usebeforeresponse,omitempty"`
+	Filters           []FilterStep `yaml:"filters,omitempty"`
 }
