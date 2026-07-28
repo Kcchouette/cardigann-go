@@ -104,3 +104,123 @@ func TestLogin_CookieMethod(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestLogin_GetWithInputs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		_ = r.ParseForm()
+		if r.FormValue("action") == "latest" && r.FormValue("passkey") == "abc123" {
+			w.Write([]byte(`<html><body>OK</body></html>`))
+			return
+		}
+		w.Write([]byte(`<html><body><div class="error">bad params</div></body></html>`))
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method: "get",
+			Login:  "/api",
+			Inputs: map[string]string{
+				"action":  "latest",
+				"passkey": "{{ .Config.passkey }}",
+			},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{
+		"passkey": "abc123",
+	})
+	if err != nil {
+		t.Fatalf("expected successful login, got error: %v", err)
+	}
+}
+
+func TestLogin_GetWithErrorResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<html><body><div class="error">Invalid API key</div></body></html>`))
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method: "get",
+			Login:  "/api",
+			Inputs: map[string]string{
+				"passkey": "{{ .Config.passkey }}",
+			},
+			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{
+		"passkey": "bad",
+	})
+	if err == nil {
+		t.Fatal("expected login error for bad passkey")
+	}
+	if _, ok := err.(*ErrLoginFailed); !ok {
+		t.Errorf("expected *ErrLoginFailed, got %T: %v", err, err)
+	}
+}
+
+func TestLogin_GetWithoutInputs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		w.Write([]byte(`<html><body>OK</body></html>`))
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method: "get",
+			Login:  "/api/test",
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{})
+	if err != nil {
+		t.Fatalf("expected successful login, got error: %v", err)
+	}
+}
+
+func TestLogin_GetWithTestVerification(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api":
+			w.Write([]byte(`<html><body>OK</body></html>`))
+		case "/api/status":
+			w.Write([]byte(`<html><body><div class="auth">Authenticated</div></body></html>`))
+		}
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method: "get",
+			Login:  "/api",
+			Test:   &cmodel.Test{Path: "/api/status", Selector: "div.auth"},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{})
+	if err != nil {
+		t.Fatalf("expected successful login with test verification, got error: %v", err)
+	}
+}

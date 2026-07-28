@@ -43,8 +43,9 @@ type Provider struct {
 	// première requête de recherche.
 	Client *httpclient.IndexerClient
 
-	loginOnce sync.Once
-	loginErr  error
+	loginOnce   sync.Once
+	loginErr    error
+	lastKeywords string
 }
 
 // NewProvider construit un Provider Cardigann prêt à l'emploi, sans gestion
@@ -110,6 +111,7 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 			return nil, fmt.Errorf("keywordsfilters: %w", err)
 		}
 	}
+	p.lastKeywords = keywords
 
 	rctx := tmpl.Context{
 		Config:   p.Config,
@@ -203,6 +205,8 @@ func (p *Provider) parseResults(body string, responseType string) ([]release.Rel
 	switch responseType {
 	case "json":
 		doc, err = selector.NewJSONDocument(body)
+	case "xml":
+		doc, err = selector.NewXMLDocument(body)
 	default:
 		doc, err = selector.NewHTMLDocument(body)
 	}
@@ -216,6 +220,35 @@ func (p *Provider) parseResults(body string, responseType string) ([]release.Rel
 	}
 	if p.Def.Search.Rows.After > 0 && p.Def.Search.Rows.After < len(rows) {
 		rows = rows[p.Def.Search.Rows.After:]
+	}
+
+	// Apply row-level filters (e.g. andmatch) before field extraction.
+	if len(p.Def.Search.Rows.Filters) > 0 {
+		keywords := p.lastKeywords
+		filtered := rows[:0]
+		for _, row := range rows {
+			text := row.Text()
+			passed := true
+			for _, f := range p.Def.Search.Rows.Filters {
+				if f.Name == "andmatch" {
+					if !filters.ApplyAndMatch(text, keywords) {
+						passed = false
+						break
+					}
+					continue
+				}
+				result, err := filters.Apply(text, []filters.Step{{Name: f.Name, Args: f.Args}})
+				if err != nil || result == "" {
+					passed = false
+					break
+				}
+				text = result
+			}
+			if passed {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
 	}
 
 	releases := make([]release.Release, 0, len(rows))

@@ -6,6 +6,8 @@
 // toutes les fonctionnalités du schéma.
 package definition
 
+import "strings"
+
 // IndexerDefinition représente une définition Cardigann complète (v11).
 type IndexerDefinition struct {
 	ID          string   `yaml:"id"`
@@ -28,12 +30,50 @@ type IndexerDefinition struct {
 }
 
 // IsUsenet indique si la définition produit des résultats usenet plutôt que torrent.
-// NB: le mécanisme exact observé dans le corpus réel v11 associe le protocole usenet
-// aux catégories Newznab (2000-8999) plutôt qu'à `type` (qui désigne le niveau
-// d'accès public/private/semi-private). On expose donc une heuristique dédiée ici,
-// affinée en Slice F au vu des vraies définitions usenet analysées.
+//
+// L'heuristique utilise deux signaux complémentaires :
+//  1. Le champ type: "usenet" (signal direct, mais rarement utilisé dans le corpus v11).
+//  2. La présence de catégories Newznab dans la plage 2000-8999 (signal usenet standard),
+//     avec une garde contre les faux positifs : on requiert au moins une catégorie dont
+//     la description contient un mot-clé usenet explicite (ex: "NZB", "Usenet"),
+//     OU que TOUS les categorymappings aient des IDs dans cette plage (indexeur purement usenet).
 func (d IndexerDefinition) IsUsenet() bool {
-	return d.Type == "usenet"
+	if d.Type == "usenet" {
+		return true
+	}
+	if len(d.Caps.CategoryMappings) == 0 {
+		return false
+	}
+
+	usenetKeywords := []string{"usenet", "nzb", "newznab"}
+	allInUsenetRange := true
+	hasUsenetKeyword := false
+
+	for _, cm := range d.Caps.CategoryMappings {
+		catID := 0
+		for _, r := range cm.Cat {
+			if r >= '0' && r <= '9' {
+				catID = catID*10 + int(r-'0')
+			} else {
+				catID = 0
+				break
+			}
+		}
+		if catID < 2000 || catID > 8999 {
+			allInUsenetRange = false
+		}
+		desc := strings.ToLower(cm.Desc)
+		for _, kw := range usenetKeywords {
+			if strings.Contains(desc, kw) {
+				hasUsenetKeyword = true
+				break
+			}
+		}
+	}
+
+	// Indexeur purement usenet (toutes les catégories dans la plage Newznab)
+	// OU au moins une catégorie avec mot-clé usenet explicite.
+	return allInUsenetRange || hasUsenetKeyword
 }
 
 // Caps décrit les capacités de recherche/catégories de l'indexeur.
@@ -110,8 +150,9 @@ type ResponseInfo struct {
 
 // Rows décrit comment sélectionner les lignes de résultats dans le document de réponse.
 type Rows struct {
-	Selector string `yaml:"selector"`
-	After    int    `yaml:"after"`
+	Selector string       `yaml:"selector"`
+	After    int          `yaml:"after"`
+	Filters  []FilterStep `yaml:"filters"`
 }
 
 // Field décrit comment extraire et transformer une valeur pour une ligne de résultat.

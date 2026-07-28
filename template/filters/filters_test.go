@@ -89,3 +89,144 @@ func TestDateParse(t *testing.T) {
 		t.Errorf("dateparse = %q, want %q", got, want)
 	}
 }
+
+func TestTimeParse_Alias(t *testing.T) {
+	got, err := Apply("2024-01-15", []Step{{Name: "timeparse"}})
+	if err != nil {
+		t.Fatalf("timeparse failed: %v", err)
+	}
+	want := "2024-01-15T00:00:00Z"
+	if got != want {
+		t.Errorf("timeparse = %q, want %q", got, want)
+	}
+}
+
+func TestAndMatch(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		keywords string
+		want     bool
+	}{
+		{"all keywords present", "The Matrix 1999 1080p", "matrix 1999", true},
+		{"keyword missing", "The Matrix 1999 1080p", "avatar", false},
+		{"case insensitive", "The Matrix 1999", "MATRIX", true},
+		{"empty keywords", "anything", "", true},
+		{"multiple keywords all present", "Inception 2010 720p BluRay", "inception 2010", true},
+		{"multiple keywords one missing", "Inception 2010 720p BluRay", "inception avatar", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ApplyAndMatch(tt.text, tt.keywords)
+			if got != tt.want {
+				t.Errorf("ApplyAndMatch(%q, %q) = %v, want %v", tt.text, tt.keywords, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTimeAgo(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"3 hours ago", "3 hours ago", false},
+		{"1 day ago", "1 day ago", false},
+		{"just now", "just now", false},
+		{"yesterday", "yesterday", false},
+		{"2 weeks ago", "2 weeks ago", false},
+		{"1 month ago", "1 month ago", false},
+		{"invalid", "something invalid", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Apply(tt.value, []Step{{Name: "timeago"}})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("timeago error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && got == "" {
+				t.Error("timeago returned empty string")
+			}
+		})
+	}
+}
+
+func TestFuzzyTime(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"today", "today", false},
+		{"yesterday", "yesterday", false},
+		{"just now", "just now", false},
+		{"french today", "aujourd'hui", false},
+		{"french yesterday", "hier", false},
+		{"portuguese today", "hoje", false},
+		{"standard date", "2024-01-15", false},
+		{"invalid", "not a date at all xyz", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Apply(tt.value, []Step{{Name: "fuzzytime"}})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("fuzzytime error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && got == "" {
+				t.Error("fuzzytime returned empty string")
+			}
+		})
+	}
+}
+
+func TestDiacritics(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"cafe", "café", "cafe"},
+		{"czech", "Příliš žluťoučký", "Prilis zlutoucky"},
+		{"no diacritics", "hello", "hello"},
+		{"mixed", "Ñoño café", "Nono cafe"},
+		{"french", "résumé", "resume"},
+		{"german", "über", "uber"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Apply(tt.value, []Step{{Name: "diacritics"}})
+			if err != nil {
+				t.Fatalf("diacritics error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("diacritics(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidate(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		args  []string
+		want  string
+	}{
+		{"match", "Action", []string{"Action, Comedy, Drama"}, "Action"},
+		{"match trimmed", " Action ", []string{"Action, Comedy, Drama"}, "Action"},
+		{"no match", "Horror", []string{"Action, Comedy, Drama"}, ""},
+		{"empty value", "", []string{"Action, Comedy"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Apply(tt.value, []Step{{Name: "validate", Args: tt.args}})
+			if err != nil {
+				t.Fatalf("validate error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("validate(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}

@@ -1,8 +1,8 @@
-// Package login implémente le moteur d'authentification Cardigann pour le
-// MVP : méthodes `form` et `cookie` uniquement (`get`/`oneurl` sont reportées
-// en post-MVP, cf. plan). Le résultat d'un login réussi est simplement les
-// cookies posés sur le *http.Client fourni (généralement un
-// httpclient.IndexerClient avec persistance SQLite en amont).
+// Package login implémente le moteur d'authentification Cardigann :
+// méthodes `form`, `cookie` et `get` supportées (`oneurl` reporté en
+// post-MVP). Le résultat d'un login réussi est simplement les cookies
+// posés sur le *http.Client fourni (généralement un httpclient.IndexerClient
+// avec persistance SQLite en amont).
 package login
 
 import (
@@ -38,6 +38,8 @@ func Login(ctx context.Context, client *http.Client, def cmodel.IndexerDefinitio
 		return loginCookie(client, baseURL, config)
 	case "form":
 		return loginForm(ctx, client, def, baseURL, config)
+	case "get":
+		return loginGet(ctx, client, def, baseURL, config)
 	default:
 		// get/oneurl : post-MVP (cf. plan Slice C).
 		return fmt.Errorf("login method %q not supported yet (post-MVP)", def.Login.Method)
@@ -96,6 +98,57 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 		return fmt.Errorf("building login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("login request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return fmt.Errorf("reading login response: %w", err)
+	}
+
+	if err := checkLoginErrors(string(body), def.Login.Error); err != nil {
+		return err
+	}
+
+	if def.Login.Test != nil && def.Login.Test.Path != "" {
+		return verifyTest(ctx, client, baseURL, *def.Login.Test)
+	}
+	return nil
+}
+
+// loginGet effectue un login par requête GET : les inputs déclarés sont envoyés
+// en paramètres d'URL (query string), puis vérification via login.error et/ou login.test.
+func loginGet(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
+	rctx := tmpl.Context{Config: config}
+
+	loginPath, err := tmpl.Render(def.Login.Login, rctx)
+	if err != nil {
+		return fmt.Errorf("rendering login path: %w", err)
+	}
+	loginURL := resolveURL(baseURL, loginPath)
+
+	values := url.Values{}
+	for name, valueTmpl := range def.Login.Inputs {
+		rendered, err := tmpl.Render(valueTmpl, rctx)
+		if err != nil {
+			return fmt.Errorf("rendering login input %q: %w", name, err)
+		}
+		values.Set(name, rendered)
+	}
+
+	reqURL := loginURL
+	if len(values) > 0 {
+		reqURL = loginURL + "?" + values.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("building login request: %w", err)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
