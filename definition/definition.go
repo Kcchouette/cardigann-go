@@ -135,11 +135,13 @@ type Test struct {
 
 // Search décrit comment effectuer une recherche et parser les résultats.
 type Search struct {
-	Paths           []SearchPath     `yaml:"paths"`
-	Rows            Rows             `yaml:"rows"`
-	Fields          map[string]Field `yaml:"fields"`
-	KeywordsFilters []FilterStep     `yaml:"keywordsfilters"`
-	Error           []ErrorSelector  `yaml:"error"`
+	Paths           []SearchPath        `yaml:"paths"`
+	Rows            Rows                `yaml:"rows"`
+	Fields          map[string]Field    `yaml:"fields"`
+	KeywordsFilters []FilterStep        `yaml:"keywordsfilters"`
+	Error           []ErrorSelector     `yaml:"error"`
+	Headers         map[string][]string `yaml:"headers,omitempty"`
+	Inputs          map[string]string   `yaml:"inputs,omitempty"`
 }
 
 // SearchPath décrit un template d'URL/paramètres de requête de recherche.

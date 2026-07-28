@@ -138,6 +138,18 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 	// Map Newznab category IDs to native tracker category IDs.
 	mappedCategories := mapCategories(q.Categories, p.Def.Caps.CategoryMappings)
 
+	// Populate config with default values from definition if not already set
+	// Note: "false" est truthy dans les templates Go, donc on l'exclut du Config
+	// pour que {{ if .Config.freeleech }} fonctionne correctement.
+	if p.Config == nil {
+		p.Config = make(map[string]string)
+	}
+	for _, setting := range p.Def.Settings {
+		if _, exists := p.Config[setting.Name]; !exists && setting.Default != "" && setting.Default != "false" {
+			p.Config[setting.Name] = setting.Default
+		}
+	}
+
 	rctx := tmpl.Context{
 		Config:     p.Config,
 		Keywords:   keywords,
@@ -231,22 +243,66 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 		return nil, fmt.Errorf("rendering path: %w", err)
 	}
 
-	fullURL := strings.TrimRight(p.BaseURL, "/") + "/" + strings.TrimLeft(renderedPath, "/")
+	// Si le path rendu est déjà une URL complète (commence par http:// ou https://),
+	// ne pas préfixer par BaseURL.
+	var fullURL string
+	if strings.HasPrefix(renderedPath, "http://") || strings.HasPrefix(renderedPath, "https://") {
+		fullURL = renderedPath
+	} else {
+		fullURL = strings.TrimRight(p.BaseURL, "/") + "/" + strings.TrimLeft(renderedPath, "/")
+	}
 
 	method := strings.ToUpper(path.Method)
 	if method == "" {
 		method = http.MethodGet
 	}
 
+	// Utiliser les inputs du path, ou fallback sur les inputs du search
+	inputs := path.Inputs
+	if len(inputs) == 0 {
+		inputs = p.Def.Search.Inputs
+	}
+
+	// Séparer les paramètres $raw des inputs normaux
+	var rawParams string
+	normalInputs := make(map[string]string)
+	for k, v := range inputs {
+		if k == "$raw" {
+			rendered, err := tmpl.Render(v, rctx)
+			if err != nil {
+				return nil, fmt.Errorf("rendering $raw: %w", err)
+			}
+			rawParams = rendered
+		} else {
+			normalInputs[k] = v
+		}
+	}
+
 	var req *http.Request
 	if method == http.MethodPost {
 		values := url.Values{}
-		for k, v := range path.Inputs {
+		for k, v := range normalInputs {
 			rendered, err := tmpl.Render(v, rctx)
 			if err != nil {
 				return nil, fmt.Errorf("rendering input %q: %w", k, err)
 			}
-			values.Set(k, rendered)
+			// Ignorer les paramètres vides ou "false" (évite les erreurs 400 sur certaines APIs)
+			// Note: "false" est truthy dans les templates Go, mais les APIs attendent pas de paramètre
+			if rendered != "" && rendered != "false" {
+				values.Set(k, rendered)
+			}
+		}
+		// Ajouter les paramètres $raw
+		if rawParams != "" {
+			for _, param := range strings.Split(rawParams, "&") {
+				if param == "" {
+					continue
+				}
+				parts := strings.SplitN(param, "=", 2)
+				if len(parts) == 2 {
+					values.Add(parts[0], parts[1])
+				}
+			}
 		}
 		req, err = http.NewRequestWithContext(ctx, method, fullURL, strings.NewReader(values.Encode()))
 		if err != nil {
@@ -259,12 +315,28 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 			return nil, fmt.Errorf("invalid url %q: %w", fullURL, err)
 		}
 		values := u.Query()
-		for k, v := range path.Inputs {
+		for k, v := range normalInputs {
 			rendered, err := tmpl.Render(v, rctx)
 			if err != nil {
 				return nil, fmt.Errorf("rendering input %q: %w", k, err)
 			}
-			values.Set(k, rendered)
+			// Ignorer les paramètres vides ou "false" (évite les erreurs 400 sur certaines APIs)
+			// Note: "false" est truthy dans les templates Go, mais les APIs attendent pas de paramètre
+			if rendered != "" && rendered != "false" {
+				values.Set(k, rendered)
+			}
+		}
+		// Ajouter les paramètres $raw
+		if rawParams != "" {
+			for _, param := range strings.Split(rawParams, "&") {
+				if param == "" {
+					continue
+				}
+				parts := strings.SplitN(param, "=", 2)
+				if len(parts) == 2 {
+					values.Add(parts[0], parts[1])
+				}
+			}
 		}
 		u.RawQuery = values.Encode()
 		req, err = http.NewRequestWithContext(ctx, method, u.String(), nil)
@@ -273,10 +345,22 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 		}
 	}
 
+	// Appliquer les headers de la définition (ex: Authorization: Bearer {{ .Config.apikey }})
+	for header, vals := range p.Def.Search.Headers {
+		for _, v := range vals {
+			rendered, err := tmpl.Render(v, rctx)
+			if err != nil {
+				return nil, fmt.Errorf("rendering header %q: %w", header, err)
+			}
+			req.Header.Add(header, rendered)
+		}
+	}
+
 	client, err := p.httpClient(ctx)
 	if err != nil {
 		return nil, err
 	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http request: %w", err)
@@ -374,53 +458,101 @@ func (p *Provider) parseResults(ctx context.Context, body string, responseType s
 func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx tmpl.Context) (release.Release, error) {
 	values := make(map[string]string, len(p.Def.Search.Fields))
 
-	// Implémentation minimale (Slice B) : les sélecteurs de champs sont
-	// évalués relativement au texte/attributs du noeud de ligne lui-même.
-	// Une évaluation "sous-document" par ligne (ex: re-sélection CSS
-	// enfant) sera ajoutée si le corpus réel de définitions l'exige.
-	for name, field := range p.Def.Search.Fields {
-		var raw string
-		var ok bool
-		target := row
+	// Extraire les champs en plusieurs passes pour gérer les dépendances
+	// (ex: title_phase2 dépend de title_phase1).
+	// On continue tant qu'on fait du progrès.
+	if rctx.Result == nil {
+		rctx.Result = make(map[string]string)
+	}
 
-		if field.Selector != "" {
-			if sub, isSub := row.(selector.SubSelectable); isSub {
-				nodes, err := sub.Find(field.Selector)
-				if err != nil || len(nodes) == 0 {
-					if field.Optional {
+	for pass := 0; pass < 10; pass++ { // Max 10 passes
+		progress := false
+		for name, field := range p.Def.Search.Fields {
+			// Si le champ est déjà extrait, on le saute
+			if _, done := values[name]; done {
+				continue
+			}
+			if pass == 0 {
+			}
+			
+			var raw string
+			var ok bool
+			target := row
+
+			if field.Selector != "" {
+				if sub, isSub := row.(selector.SubSelectable); isSub {
+					nodes, err := sub.Find(field.Selector)
+					if err != nil || len(nodes) == 0 {
+						if field.Optional {
+							values[name] = ""
+							rctx.Result[name] = ""
+							progress = true
+							continue
+						}
+						// Champ requis non trouvé, on le garde pour la prochaine passe
 						continue
 					}
-					return release.Release{}, fmt.Errorf("required field %q: selector %q matched nothing", name, field.Selector)
+					target = nodes[0]
 				}
-				target = nodes[0]
 			}
-		}
 
-		if field.Text != "" {
-			raw = field.Text
-			ok = true
-		} else if field.Attribute != "" {
-			raw, ok = target.Attr(field.Attribute)
-		} else {
-			raw = target.Text()
-			ok = raw != ""
-		}
+			if field.Text != "" {
+				// Rendre le template avec le contexte (Result, Config, etc.)
+				rendered, err := tmpl.Render(field.Text, rctx)
+				if err != nil {
+					if field.Optional {
+						values[name] = ""
+						rctx.Result[name] = ""
+						progress = true
+						continue
+					}
+					// Template non résolu, on le garde pour la prochaine passe
+					continue
+				}
+				// Vérifier si le rendu contient encore des placeholders non résolus
+				if strings.Contains(rendered, "<no value>") || strings.Contains(rendered, "{{") {
+					continue
+				}
+				raw = rendered
+				ok = true
+			} else if field.Attribute != "" {
+				raw, ok = target.Attr(field.Attribute)
+			} else {
+				raw = target.Text()
+				ok = raw != ""
+			}
 
-		if !ok {
-			if field.Optional {
+			if !ok {
+				if field.Optional {
+					values[name] = ""
+					rctx.Result[name] = ""
+					progress = true
+					continue
+				}
+				// Champ requis manquant, on le garde pour la prochaine passe
 				continue
 			}
-			return release.Release{}, fmt.Errorf("required field %q missing", name)
-		}
 
-		filtered, err := filters.Apply(raw, toFilterSteps(field.Filters))
-		if err != nil {
-			if field.Optional {
+			filtered, err := filters.Apply(raw, toFilterSteps(field.Filters))
+			if err != nil {
+				if field.Optional {
+					values[name] = ""
+					rctx.Result[name] = ""
+					progress = true
+					continue
+				}
+				// Filtre échoué, on le garde pour la prochaine passe
 				continue
 			}
-			return release.Release{}, fmt.Errorf("field %q: %w", name, err)
+			values[name] = filtered
+			rctx.Result[name] = filtered
+			progress = true
 		}
-		values[name] = filtered
+		
+		if !progress {
+			// Aucun progrès, on arrête
+			break
+		}
 	}
 
 	rel, err := fieldsToRelease(values)

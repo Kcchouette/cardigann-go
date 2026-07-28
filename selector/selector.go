@@ -92,6 +92,21 @@ type jsonDocument struct {
 }
 
 func (d *jsonDocument) Find(path string) ([]Node, error) {
+	// Cas spécial : "$" signifie "tous les éléments du tableau racine"
+	if path == "$" {
+		result := gjson.Parse(d.raw)
+		if result.Exists() && result.IsArray() {
+			nodes := make([]Node, 0)
+			result.ForEach(func(_, value gjson.Result) bool {
+				nodes = append(nodes, &jsonNode{result: value})
+				return true
+			})
+			return nodes, nil
+		}
+		// Si ce n'est pas un tableau, retourner l'élément racine
+		return []Node{&jsonNode{result: result}}, nil
+	}
+
 	result := gjson.Get(d.raw, path)
 	if !result.Exists() {
 		return nil, nil

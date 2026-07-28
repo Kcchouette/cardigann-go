@@ -95,7 +95,9 @@ func reReplace(v string, args []string) (string, error) {
 	}
 	re, err := regexp.Compile(args[0])
 	if err != nil {
-		return "", fmt.Errorf("invalid regexp %q: %w", args[0], err)
+		// Si la regex contient des features PCRE non supportées (lookahead, etc.),
+		// retourner la valeur originale sans erreur.
+		return v, nil
 	}
 	return re.ReplaceAllString(v, args[1]), nil
 }
@@ -187,6 +189,9 @@ var dateLayouts = []string{
 	time.RFC3339,
 	"2006-01-02 15:04:05",
 	"2006-01-02T15:04:05",
+	"2006-01-02T15:04:05.999999",          // Format avec microsecondes
+	"2006-01-02T15:04:05.999999 -07:00",   // Format avec microsecondes et timezone
+	"2006-01-02T15:04:05.999999-07:00",    // Sans espace avant timezone
 	"2006-01-02",
 	"02 Jan 2006",
 	"Mon, 02 Jan 2006 15:04:05 -0700",
