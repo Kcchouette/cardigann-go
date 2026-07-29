@@ -246,10 +246,10 @@ func TestAndMatch_FieldLevelError(t *testing.T) {
 
 func TestJsonParse_NestedPath(t *testing.T) {
 	tests := []struct {
-		name   string
-		json   string
-		path   string
-		want   string
+		name string
+		json string
+		path string
+		want string
 	}{
 		{"flat field", `{"title":"Ubuntu"}`, "title", "Ubuntu"},
 		{"nested path", `{"result":{"data":{"title":"Ubuntu"}}}`, "result.data.title", "Ubuntu"},
@@ -324,6 +324,36 @@ func TestDateParse_Microseconds(t *testing.T) {
 				t.Errorf("dateparse(%q) = %q, want %q", tt.value, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestReReplace_InvalidRegexRepeated(t *testing.T) {
+	// Le pattern invalide doit être re-testé (via le cache d'échec) sans
+	// jamais paniquer, même appelé plusieurs fois sur le même pattern.
+	for i := 0; i < 5; i++ {
+		got, err := Apply("test", []Step{{Name: "re_replace", Args: []string{`[invalid`, ""}}})
+		if err != nil {
+			t.Fatalf("call %d: re_replace error: %v", i, err)
+		}
+		if got != "test" {
+			t.Errorf("call %d: got %q, want %q", i, got, "test")
+		}
+	}
+
+	// regexpExtract doit renvoyer une erreur (pas paniquer) sur le même
+	// pattern invalide mis en cache par l'appel précédent à re_replace.
+	if _, err := Apply("test", []Step{{Name: "regexp", Args: []string{`[invalid`}}}); err == nil {
+		t.Fatal("expected error for invalid regexp pattern")
+	}
+}
+
+func BenchmarkReReplace_CachedPattern(b *testing.B) {
+	steps := []Step{{Name: "re_replace", Args: []string{`\d+`, "#"}}}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := Apply("item 12345 title", steps); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

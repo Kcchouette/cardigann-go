@@ -17,7 +17,15 @@ type cookieJar struct {
 	inner     *cookiejar.Jar
 	indexerID string
 	persister CookiePersister
-	lastURLs  map[string]struct{} // URLs vues, pour ré-extraire les cookies à persister
+	lastURLs  map[string]struct{} // origines vues, pour ré-extraire les cookies à persister
+
+	// generation est incrémenté à chaque mutation de l'état des cookies
+	// (SetCookies). persistedGen mémorise la dernière génération réellement
+	// écrite via CookiePersister.Store. persist() ne réécrit que si
+	// generation != persistedGen, ce qui évite une écriture (souvent SQLite)
+	// après chaque requête HTTP réussie alors que rien n'a changé.
+	generation   uint64
+	persistedGen uint64
 }
 
 // persistedCookie est la forme sérialisée d'un cookie, indépendante de l'URL
@@ -40,6 +48,7 @@ func newCookieJar(indexerID string, persister CookiePersister) *cookieJar {
 func (j *cookieJar) SetCookies(u *url.URL, cookies []*http.Cookie) {
 	j.mu.Lock()
 	j.lastURLs[originOf(u)] = struct{}{}
+	j.generation++
 	j.mu.Unlock()
 	j.inner.SetCookies(u, cookies)
 }
@@ -57,6 +66,10 @@ func originOf(u *url.URL) string {
 
 // load recharge les cookies précédemment persistés pour cet indexeur (no-op
 // si aucun persister n'est configuré ou si aucun cookie n'existe encore).
+// Les origines rechargées sont aussi enregistrées dans lastURLs : sans ça,
+// un persist() déclenché après usage d'une seule origine écraserait l'état
+// persisté et perdrait les cookies restaurés des autres origines jamais
+// recontactées durant la session.
 func (j *cookieJar) load() error {
 	if j.persister == nil {
 		return nil
@@ -77,6 +90,12 @@ func (j *cookieJar) load() error {
 		if err != nil {
 			continue
 		}
+		j.mu.Lock()
+		j.lastURLs[originOf(u)] = struct{}{}
+		j.mu.Unlock()
+		// Utilise directement inner.SetCookies (pas j.SetCookies) : recharger
+		// un état déjà persisté ne doit pas être considéré comme une
+		// mutation "sale" nécessitant une re-persistance immédiate.
 		j.inner.SetCookies(u, entry.Cookies)
 	}
 	return nil
@@ -84,12 +103,22 @@ func (j *cookieJar) load() error {
 
 // persist sauvegarde les cookies courants pour toutes les origines vues
 // pendant la session, afin qu'un futur `cardigann-go` (nouveau
-// process) puisse les recharger.
+// process) puisse les recharger. N'effectue une écriture réelle
+// (CookiePersister.Store) que si l'état a changé depuis le dernier appel
+// réussi (cf. generation/persistedGen), afin d'éviter une écriture par
+// requête HTTP.
 func (j *cookieJar) persist() error {
 	if j.persister == nil {
 		return nil
 	}
+
 	j.mu.Lock()
+	genAtStart := j.generation
+	if genAtStart == j.persistedGen {
+		// Rien n'a changé depuis la dernière persistance réussie.
+		j.mu.Unlock()
+		return nil
+	}
 	urls := make([]string, 0, len(j.lastURLs))
 	for u := range j.lastURLs {
 		urls = append(urls, u)
@@ -102,19 +131,28 @@ func (j *cookieJar) persist() error {
 		if err != nil {
 			continue
 		}
-		cookies := j.inner.Cookies(u)
-		if len(cookies) == 0 {
-			continue
-		}
-		entries = append(entries, persistedCookie{URL: raw, Cookies: cookies})
-	}
-	if len(entries) == 0 {
-		return nil
+		// Toujours inclure l'origine, même sans cookie courant : un cookie
+		// supprimé/expiré doit être reflété dans l'état persisté, sinon il
+		// resterait indéfiniment rechargé depuis un ancien persist().
+		entries = append(entries, persistedCookie{URL: raw, Cookies: j.inner.Cookies(u)})
 	}
 
 	data, err := json.Marshal(entries)
 	if err != nil {
 		return fmt.Errorf("encoding cookies: %w", err)
 	}
-	return j.persister.Store(j.indexerID, string(data))
+	if err := j.persister.Store(j.indexerID, string(data)); err != nil {
+		return fmt.Errorf("storing cookies: %w", err)
+	}
+
+	j.mu.Lock()
+	// Ne marque "propre" que si aucune nouvelle mutation n'a eu lieu pendant
+	// la sérialisation/l'écriture ci-dessus ; sinon la prochaine persist()
+	// détectera à nouveau un état "sale" et retentera (pas de mutation
+	// perdue en cas d'écriture concurrente).
+	if j.generation == genAtStart {
+		j.persistedGen = genAtStart
+	}
+	j.mu.Unlock()
+	return nil
 }

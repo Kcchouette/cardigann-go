@@ -14,12 +14,48 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
 	"github.com/tidwall/gjson"
 	"golang.org/x/text/unicode/norm"
 )
+
+// compiledRegex mémorise le résultat (succès ou échec) de la compilation
+// d'un pattern regex, pour être mis en cache sans jamais exposer un
+// *regexp.Regexp nil brut (qui paniquerait si utilisé par erreur).
+type compiledRegex struct {
+	re  *regexp.Regexp
+	err error
+}
+
+// regexCache mémorise les regex déjà compilées (succès et échecs), indexées
+// par leur pattern brut, pour éviter de recompiler le même pattern à chaque
+// ligne extraite (reReplace/regexpExtract sont appelés par ligne x champ).
+//
+// Hypothèse de dimensionnement : les patterns proviennent des filtres
+// définis dans les définitions Cardigann (YAML) chargées, donc leur
+// cardinalité est bornée par le corpus de définitions. Registry/Apply étant
+// exportés, un appelant qui générerait des patterns dynamiquement à partir
+// d'entrées non bornées ferait grossir ce cache indéfiniment ; ce n'est pas
+// l'usage prévu.
+var regexCache sync.Map // string -> compiledRegex
+
+// compileRegex retourne le regexp compilé pour pattern, en réutilisant le
+// cache s'il existe déjà (y compris pour un pattern précédemment invalide,
+// afin de ne pas retenter Compile à chaque appel sur un pattern qui échoue
+// systématiquement).
+func compileRegex(pattern string) (*regexp.Regexp, error) {
+	if cached, ok := regexCache.Load(pattern); ok {
+		c := cached.(compiledRegex)
+		return c.re, c.err
+	}
+	re, err := regexp.Compile(pattern)
+	actual, _ := regexCache.LoadOrStore(pattern, compiledRegex{re: re, err: err})
+	c := actual.(compiledRegex)
+	return c.re, c.err
+}
 
 // FilterFunc applique un filtre nommé à une valeur, avec ses arguments positionnels.
 type FilterFunc func(value string, args []string) (string, error)
@@ -93,7 +129,7 @@ func reReplace(v string, args []string) (string, error) {
 	if len(args) < 2 {
 		return "", fmt.Errorf("re_replace requires 2 args, got %d", len(args))
 	}
-	re, err := regexp.Compile(args[0])
+	re, err := compileRegex(args[0])
 	if err != nil {
 		// Si la regex contient des features PCRE non supportées (lookahead, etc.),
 		// retourner la valeur originale sans erreur.
@@ -143,7 +179,7 @@ func regexpExtract(v string, args []string) (string, error) {
 	if len(args) < 1 {
 		return "", fmt.Errorf("regexp requires 1 arg")
 	}
-	re, err := regexp.Compile(args[0])
+	re, err := compileRegex(args[0])
 	if err != nil {
 		return "", fmt.Errorf("invalid regexp %q: %w", args[0], err)
 	}
@@ -189,9 +225,9 @@ var dateLayouts = []string{
 	time.RFC3339,
 	"2006-01-02 15:04:05",
 	"2006-01-02T15:04:05",
-	"2006-01-02T15:04:05.999999",          // Format avec microsecondes
-	"2006-01-02T15:04:05.999999 -07:00",   // Format avec microsecondes et timezone
-	"2006-01-02T15:04:05.999999-07:00",    // Sans espace avant timezone
+	"2006-01-02T15:04:05.999999",        // Format avec microsecondes
+	"2006-01-02T15:04:05.999999 -07:00", // Format avec microsecondes et timezone
+	"2006-01-02T15:04:05.999999-07:00",  // Sans espace avant timezone
 	"2006-01-02",
 	"02 Jan 2006",
 	"Mon, 02 Jan 2006 15:04:05 -0700",
@@ -243,6 +279,11 @@ func ApplyAndMatch(v string, keywords string) bool {
 	return true
 }
 
+// reTimeAgo matche les expressions "X unit(s) ago" pour timeAgo. Regex
+// constante : compilée une seule fois au chargement du package plutôt qu'à
+// chaque appel de timeAgo.
+var reTimeAgo = regexp.MustCompile(`^(\d+)\s+(minute|hour|day|week|month|year)s?\s*(?:ago)?$`)
+
 // timeAgo convertit des expressions de temps relatif en timestamps RFC3339.
 // Supporte : "X minutes/hours/days/weeks/months/years ago",
 // "just now", "yesterday".
@@ -261,8 +302,7 @@ func timeAgo(v string, _ []string) (string, error) {
 	}
 
 	// Parse "X unit(s) ago"
-	re := regexp.MustCompile(`^(\d+)\s+(minute|hour|day|week|month|year)s?\s*(?:ago)?$`)
-	m := re.FindStringSubmatch(v)
+	m := reTimeAgo.FindStringSubmatch(v)
 	if m == nil {
 		return "", fmt.Errorf("timeago: cannot parse %q", v)
 	}
@@ -341,11 +381,14 @@ func fuzzyTime(v string, _ []string) (string, error) {
 	return "", fmt.Errorf("fuzzytime: cannot parse %q", original)
 }
 
+// reOrdinalSuffixes matche les suffixes ordinaux (st, nd, rd, th) pour
+// stripOrdinalSuffixes. Regex constante : compilée une seule fois.
+var reOrdinalSuffixes = regexp.MustCompile(`(\d)(st|nd|rd|th)\b`)
+
 // stripOrdinalSuffixes supprime les suffixes ordinaux (st, nd, rd, th) d'une chaîne.
 // Ex: "Jan 1st '26" → "Jan 1 '26", "Jul. 28th '26" → "Jul. 28 '26"
 func stripOrdinalSuffixes(s string) string {
-	re := regexp.MustCompile(`(\d)(st|nd|rd|th)\b`)
-	return re.ReplaceAllString(s, "$1")
+	return reOrdinalSuffixes.ReplaceAllString(s, "$1")
 }
 
 // diacritics supprime les diacritiques (accents, cédilles, etc.) d'une chaîne.

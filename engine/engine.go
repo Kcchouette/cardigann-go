@@ -47,10 +47,10 @@ type Query struct {
 
 // Provider exécute une IndexerDefinition Cardigann comme fournisseur de recherche.
 type Provider struct {
-	def        cmodel.IndexerDefinition
-	baseURL    string
-	config     map[string]string
-	httpCl     *http.Client
+	def     cmodel.IndexerDefinition
+	baseURL string
+	config  map[string]string
+	httpCl  *http.Client
 
 	// client, si renseigné, est utilisé à la place de httpCl : il fournit
 	// cookies persistés (SQLite), rate limiting et retries (Slice C). Le login
@@ -58,10 +58,10 @@ type Provider struct {
 	// première requête de recherche.
 	client *httpclient.IndexerClient
 
-	loginOnce    sync.Once
-	loginErr     error
-	lastKeywords string
-	limiter      *rate.Limiter
+	loginOnce  sync.Once
+	loginErr   error
+	configOnce sync.Once
+	limiter    *rate.Limiter
 }
 
 // Def retourne une copie de la définition de l'indexeur.
@@ -72,10 +72,10 @@ func (p *Provider) Def() cmodel.IndexerDefinition { return p.def }
 // Si def.RequestDelay > 0, un rate limiter est créé pour espacer les requêtes.
 func NewProvider(def cmodel.IndexerDefinition, baseURL string, config map[string]string) *Provider {
 	p := &Provider{
-		def:    def,
+		def:     def,
 		baseURL: baseURL,
-		config: config,
-		httpCl: &http.Client{Timeout: 20 * time.Second},
+		config:  config,
+		httpCl:  &http.Client{Timeout: 20 * time.Second},
 	}
 	if def.RequestDelay > 0 {
 		p.limiter = rate.NewLimiter(rate.Every(time.Duration(def.RequestDelay*float64(time.Second))), 1)
@@ -130,6 +130,11 @@ func (p *Provider) httpClient(ctx context.Context) (HTTPDoer, error) {
 }
 
 // Search exécute la recherche pour tous les search.paths de la définition.
+//
+// Sûr pour des appels concurrents sur la même instance de *Provider :
+// aucun état mutable partagé n'est modifié après la première recherche
+// (les valeurs de configuration par défaut ne sont appliquées qu'une seule
+// fois via configOnce, et les mots-clés filtrés restent locaux à l'appel).
 func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, error) {
 	keywords := q.Keywords
 	for _, step := range p.def.Search.KeywordsFilters {
@@ -139,7 +144,6 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 			return nil, fmt.Errorf("keywordsfilters: %w", err)
 		}
 	}
-	p.lastKeywords = keywords
 
 	// Map Newznab category IDs to native tracker category IDs.
 	mappedCategories := mapCategories(q.Categories, p.def.Caps.CategoryMappings)
@@ -147,14 +151,19 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 	// Populate config with default values from definition if not already set
 	// Note: "false" est truthy dans les templates Go, donc on l'exclut du Config
 	// pour que {{ if .Config.freeleech }} fonctionne correctement.
-	if p.config == nil {
-		p.config = make(map[string]string)
-	}
-	for _, setting := range p.def.Settings {
-		if _, exists := p.config[setting.Name]; !exists && setting.Default != "" && setting.Default != "false" {
-			p.config[setting.Name] = setting.Default
+	// N'est fait qu'une seule fois (configOnce) : p.config est ensuite traité
+	// comme une valeur en lecture seule, ce qui le rend sûr à partager entre
+	// des recherches concurrentes.
+	p.configOnce.Do(func() {
+		if p.config == nil {
+			p.config = make(map[string]string)
 		}
-	}
+		for _, setting := range p.def.Settings {
+			if _, exists := p.config[setting.Name]; !exists && setting.Default != "" && setting.Default != "false" {
+				p.config[setting.Name] = setting.Default
+			}
+		}
+	})
 
 	rctx := tmpl.Context{
 		Config:     p.config,
@@ -330,5 +339,5 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 		return nil, fmt.Errorf("search error: %w", err)
 	}
 
-	return p.parseResults(ctx, string(body), path.Response.Type, rctx)
+	return p.parseResults(ctx, string(body), path.Response.Type, rctx, rctx.Keywords)
 }

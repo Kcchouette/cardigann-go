@@ -9,6 +9,53 @@ import (
 	"github.com/Kcchouette/cardigann-go/release"
 )
 
+func TestWriteReleases_GuidNoCollisionOnSameTitle(t *testing.T) {
+	// Deux reposts avec le même titre mais des liens de téléchargement
+	// différents (cas fréquent sur les trackers) doivent avoir des GUID
+	// distincts, sans quoi les clients Torznab (Sonarr/Radarr) qui
+	// dédupliquent sur le GUID écarteraient l'un des deux résultats.
+	releases := []release.Release{
+		{Title: "Same.Title.2025", DownloadLink: "https://example.com/dl/1.torrent", Size: 100},
+		{Title: "Same.Title.2025", DownloadLink: "https://example.com/dl/2.torrent", Size: 100},
+	}
+
+	xmlStr, err := WriteReleasesString(releases, "TestTracker")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var resp Response
+	if err := xml.Unmarshal([]byte(xmlStr), &resp); err != nil {
+		t.Fatalf("generated XML is not valid: %v", err)
+	}
+	if len(resp.Channel.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(resp.Channel.Items))
+	}
+	if resp.Channel.Items[0].Guid == resp.Channel.Items[1].Guid {
+		t.Errorf("expected distinct GUIDs for same-title releases with different download links, got %q for both", resp.Channel.Items[0].Guid)
+	}
+}
+
+func TestWriteReleases_GuidPrefersInfoHash(t *testing.T) {
+	releases := []release.Release{
+		{Title: "Same.Title", DownloadLink: "https://example.com/dl/1.torrent", InfoHash: "hash-a"},
+		{Title: "Same.Title", DownloadLink: "https://example.com/dl/1.torrent", InfoHash: "hash-b"},
+	}
+
+	xmlStr, err := WriteReleasesString(releases, "TestTracker")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var resp Response
+	if err := xml.Unmarshal([]byte(xmlStr), &resp); err != nil {
+		t.Fatalf("generated XML is not valid: %v", err)
+	}
+	if resp.Channel.Items[0].Guid != "hash-a" || resp.Channel.Items[1].Guid != "hash-b" {
+		t.Errorf("expected GUID to be the InfoHash, got %q and %q", resp.Channel.Items[0].Guid, resp.Channel.Items[1].Guid)
+	}
+}
+
 func TestWriteReleases_ValidXML(t *testing.T) {
 	releases := []release.Release{
 		{
@@ -103,8 +150,8 @@ func TestWriteReleases_AllFieldsMapped(t *testing.T) {
 	if item.Size != 2097152 {
 		t.Errorf("expected size 2097152, got %d", item.Size)
 	}
-	if item.Guid != "Test.Release.2025" {
-		t.Errorf("expected guid, got %q", item.Guid)
+	if item.Guid != "abc123def456" {
+		t.Errorf("expected guid to be the release InfoHash, got %q", item.Guid)
 	}
 	if !strings.Contains(item.PubDate, "2025") {
 		t.Errorf("expected pubDate to contain 2025, got %q", item.PubDate)

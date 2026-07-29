@@ -2,10 +2,13 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
 	"github.com/Kcchouette/cardigann-go/httpclient"
@@ -761,6 +764,95 @@ search:
 	}
 }
 
+// Test: appels Search() concurrents sur le même *Provider avec des mots-clés
+// différents. Vérifie l'absence de race (via `go test -race`) ET l'absence
+// de cross-contamination des résultats entre goroutines (chaque recherche
+// doit filtrer selon ses propres mots-clés, pas ceux d'une autre recherche
+// concurrente qui aurait écrasé un état partagé).
+func TestSearch_ConcurrentDistinctKeywords(t *testing.T) {
+	yamlDef := `
+id: concurrenttracker
+name: ConcurrentTracker
+description: concurrent Search() test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+    filters:
+      - name: andmatch
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	htmlBody := `<html><body>
+<table class="results">
+  <tr><td><a class="title" href="/d1">The Matrix Reloaded</a></td><td><a class="dl" href="/dl/1">DL</a></td></tr>
+  <tr><td><a class="title" href="/d2">Inception Movie</a></td><td><a class="dl" href="/dl/2">DL</a></td></tr>
+  <tr><td><a class="title" href="/d3">Toy Story 4</a></td><td><a class="dl" href="/dl/4">DL</a></td></tr>
+</table>
+</body></html>`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(htmlBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+
+	cases := []struct {
+		keywords string
+		want     string
+	}{
+		{"matrix", "matrix"},
+		{"inception", "inception"},
+		{"toy", "toy"},
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, len(cases)*20)
+	for i := 0; i < 20; i++ {
+		for _, tc := range cases {
+			wg.Add(1)
+			go func(keywords, want string) {
+				defer wg.Done()
+				releases, err := provider.Search(context.Background(), Query{Keywords: keywords})
+				if err != nil {
+					errs <- fmt.Errorf("Search(%q): %w", keywords, err)
+					return
+				}
+				if len(releases) != 1 {
+					errs <- fmt.Errorf("Search(%q): expected 1 release, got %d", keywords, len(releases))
+					return
+				}
+				if !strings.Contains(strings.ToLower(releases[0].Title), want) {
+					errs <- fmt.Errorf("Search(%q): title %q does not contain %q (cross-contamination?)", keywords, releases[0].Title, want)
+				}
+			}(tc.keywords, tc.want)
+		}
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
 // Test 6: Optional text fields
 func TestSearch_WithOptionalTextFields(t *testing.T) {
 	yamlDef := `
@@ -892,6 +984,116 @@ download:
 	}
 	if releases[0].InfoHash != "a0b1c2d3e4f5a0b1c2d3e4f5a0b1c2d3e4f5a0b1" {
 		t.Errorf("expected infohash 'a0b1c2d3e4f5a0b1c2d3e4f5a0b1c2d3e4f5a0b1', got %q", releases[0].InfoHash)
+	}
+}
+
+// Test: la résolution du lien de téléchargement (before-request) pour
+// plusieurs lignes est effectuée en parallèle (bornée par
+// maxParallelExtract), pas séquentiellement ligne par ligne. Un avant-poste
+// artificiellement lent permet de vérifier que le temps total d'une
+// recherche à N lignes est très inférieur à N x latence-avant-poste, et que
+// plusieurs requêtes /api/info sont bien en vol simultanément.
+func TestSearch_ParallelDownloadResolution(t *testing.T) {
+	yamlDef := `
+id: paralleltracker
+name: ParallelTracker
+description: parallel before-request resolution test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+download:
+  before:
+    path: /api/info
+  selectors:
+    - selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	const numRows = 6
+	const perRequestDelay = 100 * time.Millisecond
+
+	var mu sync.Mutex
+	inFlight := 0
+	maxInFlight := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/search":
+			var sb strings.Builder
+			sb.WriteString(`<html><body><table class="results">`)
+			for i := 0; i < numRows; i++ {
+				fmt.Fprintf(&sb, `<tr><td><a class="title" href="/d%d">Release %d</a></td><td><a class="dl" href="/dl/%d">DL</a></td></tr>`, i, i, i)
+			}
+			sb.WriteString(`</table></body></html>`)
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(sb.String()))
+		case "/api/info":
+			mu.Lock()
+			inFlight++
+			if inFlight > maxInFlight {
+				maxInFlight = inFlight
+			}
+			mu.Unlock()
+
+			time.Sleep(perRequestDelay)
+
+			mu.Lock()
+			inFlight--
+			mu.Unlock()
+
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+
+	start := time.Now()
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != numRows {
+		t.Fatalf("expected %d releases, got %d", numRows, len(releases))
+	}
+	for i, r := range releases {
+		want := fmt.Sprintf("Release %d", i)
+		if r.Title != want {
+			t.Errorf("release %d: expected title %q (order preserved), got %q", i, want, r.Title)
+		}
+	}
+
+	sequentialWorstCase := numRows * perRequestDelay
+	if elapsed >= sequentialWorstCase {
+		t.Errorf("expected parallel resolution to be faster than sequential worst case (%v), took %v", sequentialWorstCase, elapsed)
+	}
+
+	mu.Lock()
+	got := maxInFlight
+	mu.Unlock()
+	if got < 2 {
+		t.Errorf("expected at least 2 concurrent /api/info requests in flight, observed max %d", got)
 	}
 }
 

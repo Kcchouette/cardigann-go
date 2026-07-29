@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
@@ -14,7 +15,17 @@ import (
 	"github.com/Kcchouette/cardigann-go/template/filters"
 )
 
-func (p *Provider) parseResults(ctx context.Context, body string, responseType string, rctx tmpl.Context) ([]release.Release, error) {
+// maxParallelExtract borne le nombre de lignes traitées en parallèle par
+// parseResults. Chaque extraction peut déclencher une requête HTTP
+// supplémentaire (résolution du lien de téléchargement via def.Download.Before),
+// qui était jusqu'ici effectuée séquentiellement ligne par ligne — coûteux en
+// latence pour une page de résultats avec beaucoup de lignes. Le
+// rate-limiting (RequestDelay / IndexerClient) reste respecté : rate.Limiter
+// et IndexerClient.Do sont conçus pour un usage concurrent, donc paralléliser
+// ici ne contourne pas l'espacement configuré entre requêtes HTTP.
+const maxParallelExtract = 8
+
+func (p *Provider) parseResults(ctx context.Context, body string, responseType string, rctx tmpl.Context, keywords string) ([]release.Release, error) {
 	var doc selector.Document
 	var err error
 	switch responseType {
@@ -39,7 +50,6 @@ func (p *Provider) parseResults(ctx context.Context, body string, responseType s
 
 	// Apply row-level filters (e.g. andmatch) before field extraction.
 	if len(p.def.Search.Rows.Filters) > 0 {
-		keywords := p.lastKeywords
 		filtered := rows[:0]
 		for _, row := range rows {
 			text := row.Text()
@@ -66,20 +76,45 @@ func (p *Provider) parseResults(ctx context.Context, body string, responseType s
 		rows = filtered
 	}
 
+	// Extraction des lignes en parallèle (bornée), chaque ligne restant
+	// indépendante (rctx est passé par valeur : chaque goroutine mute sa
+	// propre copie de rctx.Result sans jamais toucher celle des autres, ni
+	// la valeur d'origine du bloc appelant). L'ordre des résultats est
+	// préservé (indexé par position de ligne) pour un comportement
+	// observable identique à une exécution séquentielle.
+	extracted := make([]release.Release, len(rows))
+	rowErrs := make([]error, len(rows))
+	sem := make(chan struct{}, maxParallelExtract)
+	var wg sync.WaitGroup
+	for i, row := range rows {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, row selector.Node) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			rel, err := p.extractRelease(ctx, row, rctx)
+			if err != nil {
+				rowErrs[i] = err
+				return
+			}
+			rel.IndexerID = p.def.ID
+			rel.IndexerName = p.def.Name
+			rel.Protocol = p.Protocol()
+			extracted[i] = rel
+		}(i, row)
+	}
+	wg.Wait()
+
 	releases := make([]release.Release, 0, len(rows))
 	var extractErr error
-	for _, row := range rows {
-		release, err := p.extractRelease(ctx, row, rctx)
-		if err != nil {
+	for i := range rows {
+		if rowErrs[i] != nil {
 			if extractErr == nil {
-				extractErr = err
+				extractErr = rowErrs[i]
 			}
 			continue
 		}
-		release.IndexerID = p.def.ID
-		release.IndexerName = p.def.Name
-		release.Protocol = p.Protocol()
-		releases = append(releases, release)
+		releases = append(releases, extracted[i])
 	}
 	if len(releases) == 0 && extractErr != nil {
 		return nil, fmt.Errorf("no releases extracted (last error: %w)", extractErr)
@@ -104,9 +139,7 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 			if _, done := values[name]; done {
 				continue
 			}
-			if pass == 0 {
-			}
-			
+
 			var raw string
 			var ok bool
 			target := row
@@ -180,7 +213,7 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 			rctx.Result[name] = filtered
 			progress = true
 		}
-		
+
 		if !progress {
 			// Aucun progrès, on arrête
 			break
@@ -224,36 +257,36 @@ func toFilterSteps(steps []cmodel.FilterStep) []filters.Step {
 }
 
 func fieldsToRelease(values map[string]string) (release.Release, error) {
-	release := release.Release{
+	rel := release.Release{
 		Title:        values["title"],
 		Details:      values["details"],
 		DownloadLink: values["download"],
 		InfoHash:     values["infohash"],
 	}
-	if release.Title == "" {
-		return release, fmt.Errorf("title is required")
+	if rel.Title == "" {
+		return rel, fmt.Errorf("title is required")
 	}
 	if v, ok := values["size"]; ok {
 		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
-			release.Size = parsed
+			rel.Size = parsed
 		}
 	}
 	if v, ok := values["seeders"]; ok {
 		if parsed, err := strconv.Atoi(v); err == nil {
-			release.Seeders = parsed
+			rel.Seeders = parsed
 		}
 	}
 	if v, ok := values["peers"]; ok {
 		if parsed, err := strconv.Atoi(v); err == nil {
-			release.Peers = parsed
+			rel.Peers = parsed
 		}
 	}
 	if v, ok := values["date"]; ok {
 		if parsed, err := time.Parse(time.RFC3339, v); err == nil {
-			release.PublishDate = parsed
+			rel.PublishDate = parsed
 		}
 	}
-	return release, nil
+	return rel, nil
 }
 
 // extractSelectorField extrait une valeur d'un noeud en utilisant un SelectorField.

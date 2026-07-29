@@ -9,10 +9,10 @@ import (
 
 // selectorStep represents one part of a parsed CSS selector.
 type selectorStep struct {
-	tag         string // element name, "*" for wildcard
-	attribute   string // attribute filter key (e.g. "name" for [name=X])
-	attrValue   string // attribute filter value (e.g. "category" for [name=category])
-	childOnly   bool   // true if this step requires direct child (>)
+	tag       string // element name, "*" for wildcard
+	attribute string // attribute filter key (e.g. "name" for [name=X])
+	attrValue string // attribute filter value (e.g. "category" for [name=category])
+	childOnly bool   // true if this step requires direct child (>)
 }
 
 // parseCSSSelector parses a CSS selector string into a list of steps.

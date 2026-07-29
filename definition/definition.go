@@ -219,11 +219,11 @@ type SelectorField struct {
 
 // Download décrit comment résoudre le lien réel de téléchargement (torrent/nzb) à partir d'une ligne.
 type Download struct {
-	Selectors []DownloadSelector `yaml:"selectors,omitempty"`
-	Method    string             `yaml:"method,omitempty"`
-	Before    *DownloadBefore    `yaml:"before,omitempty"`
+	Selectors []DownloadSelector  `yaml:"selectors,omitempty"`
+	Method    string              `yaml:"method,omitempty"`
+	Before    *DownloadBefore     `yaml:"before,omitempty"`
 	Headers   map[string][]string `yaml:"headers,omitempty"`
-	Infohash  *DownloadInfohash  `yaml:"infohash,omitempty"`
+	Infohash  *DownloadInfohash   `yaml:"infohash,omitempty"`
 }
 
 // DownloadBefore décrit une requête intermédiaire à effectuer avant d'extraire le lien réel.

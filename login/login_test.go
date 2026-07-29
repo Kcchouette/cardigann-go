@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
@@ -102,6 +103,39 @@ func TestLogin_CookieMethod(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestLogin_CookieMethod_ConcurrentNilJar reproduit le scénario où plusieurs
+// Login("cookie") concurrents partagent le même *http.Client sans Jar
+// préexistant : loginCookie doit créer le jar par défaut sans data race
+// (vérifié par `go test -race`) ni perte de cookies.
+func TestLogin_CookieMethod_ConcurrentNilJar(t *testing.T) {
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{Method: "cookie"},
+	}
+	client := &http.Client{} // Jar nil intentionnellement
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := Login(context.Background(), client, def, "https://example.invalid", map[string]string{
+				"cookie": "session=abc123",
+			}); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	if client.Jar == nil {
+		t.Fatal("expected client.Jar to be initialized after concurrent logins")
 	}
 }
 

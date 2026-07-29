@@ -4,6 +4,8 @@
 package torznab
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -22,11 +24,11 @@ const (
 
 // Response is the root RSS element with Torznab xmlns attributes.
 type Response struct {
-	XMLName   xml.Name `xml:"rss"`
-	Version   string   `xml:"version,attr"`
-	XmlnsAtom string   `xml:"xmlns:atom,attr"`
-	XmlnsTorznab string `xml:"xmlns:torznab,attr"`
-	Channel   Channel  `xml:"channel"`
+	XMLName      xml.Name `xml:"rss"`
+	Version      string   `xml:"version,attr"`
+	XmlnsAtom    string   `xml:"xmlns:atom,attr"`
+	XmlnsTorznab string   `xml:"xmlns:torznab,attr"`
+	Channel      Channel  `xml:"channel"`
 }
 
 // Channel contains the feed metadata and items.
@@ -39,14 +41,14 @@ type Channel struct {
 
 // Item represents a single release in the Torznab feed.
 type Item struct {
-	Title      string       `xml:"title"`
-	Link       string       `xml:"link"`
-	Comments   string       `xml:"comments,omitempty"`
-	PubDate    string       `xml:"pubDate,omitempty"`
-	Guid       string       `xml:"guid"`
-	Enclosure  *Enclosure   `xml:"enclosure,omitempty"`
-	Size       int64        `xml:"size"`
-	Categories []string     `xml:"category"`
+	Title      string        `xml:"title"`
+	Link       string        `xml:"link"`
+	Comments   string        `xml:"comments,omitempty"`
+	PubDate    string        `xml:"pubDate,omitempty"`
+	Guid       string        `xml:"guid"`
+	Enclosure  *Enclosure    `xml:"enclosure,omitempty"`
+	Size       int64         `xml:"size"`
+	Categories []string      `xml:"category"`
 	Attrs      []TorznabAttr `xml:"attr"`
 }
 
@@ -97,11 +99,29 @@ func WriteReleases(w io.Writer, releases []release.Release, indexerName string) 
 	return nil
 }
 
+// releaseGUID dérive un identifiant Torznab discriminant pour r. Utiliser
+// r.Title seul (comportement précédent) fait collisionner deux releases de
+// même titre (reposts/doublons fréquents sur les trackers) : les clients
+// Torznab (Sonarr/Radarr/NZBHydra) dédupliquent sur le GUID et perdraient
+// silencieusement l'un des deux résultats légitimes.
+//
+// InfoHash, quand disponible, est déjà un identifiant stable et unique par
+// torrent : on le préfère. À défaut, on dérive un hash du triplet
+// Title+DownloadLink+Details, qui distingue les reposts de même titre tant
+// qu'ils ont un lien de téléchargement ou des détails différents.
+func releaseGUID(r release.Release) string {
+	if r.InfoHash != "" {
+		return r.InfoHash
+	}
+	sum := sha256.Sum256([]byte(r.Title + "|" + r.DownloadLink + "|" + r.Details))
+	return hex.EncodeToString(sum[:])
+}
+
 // releaseToItem converts a release.Release to a Torznab Item.
 func releaseToItem(r release.Release) Item {
 	item := Item{
 		Title: r.Title,
-		Guid:  r.Title,
+		Guid:  releaseGUID(r),
 		Size:  r.Size,
 	}
 

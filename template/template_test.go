@@ -1,6 +1,10 @@
 package template
 
-import "testing"
+import (
+	"fmt"
+	"sync"
+	"testing"
+)
 
 func TestRender_Keywords(t *testing.T) {
 	got, err := Render("search?q={{ .Keywords }}", Context{Keywords: "ubuntu server"})
@@ -64,6 +68,52 @@ func TestRender_InvalidTemplate(t *testing.T) {
 	_, err := Render(`{{ .Unclosed`, Context{})
 	if err == nil {
 		t.Fatal("expected parse error for invalid template")
+	}
+}
+
+func TestRender_CachedTemplateConcurrent(t *testing.T) {
+	const tmplStr = `{{ .Keywords }}-{{ ToUpper .Keywords }}`
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 50)
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			got, err := Render(tmplStr, Context{Keywords: "kw"})
+			if err != nil {
+				errs <- err
+				return
+			}
+			if got != "kw-KW" {
+				errs <- fmt.Errorf("goroutine %d: got %q, want %q", n, got, "kw-KW")
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
+func TestRender_InvalidTemplateNotCached(t *testing.T) {
+	// Un template invalide échoue à chaque appel (pas de cache d'erreur).
+	for i := 0; i < 3; i++ {
+		if _, err := Render(`{{ .Unclosed`, Context{}); err == nil {
+			t.Fatalf("call %d: expected parse error", i)
+		}
+	}
+}
+
+func BenchmarkRender_CachedTemplate(b *testing.B) {
+	tmplStr := `search?q={{ .Keywords }}&cat={{ index .Query "categories" }}`
+	ctx := Context{Keywords: "ubuntu", Query: map[string]string{"categories": "1,2,3"}}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := Render(tmplStr, ctx); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
