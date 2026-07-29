@@ -1,6 +1,6 @@
-// Package httpclient fournit le client HTTP par-indexeur : cookies persistés
-// (SQLite), limite de débit basée sur `requestDelay`, proxy optionnel
-// (HTTP/SOCKS5), et retries avec backoff exponentiel sur erreurs réseau/5xx.
+// Package httpclient provides the per-indexer HTTP client: persistent cookies
+// (SQLite), rate limiting based on `requestDelay`, optional proxy
+// (HTTP/SOCKS5), and retries with exponential backoff on network/5xx errors.
 package httpclient
 
 import (
@@ -17,25 +17,25 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// CookiePersister est le contrat minimal requis pour persister les cookies
-// d'un indexeur entre deux invocations CLI.
+// CookiePersister is the minimal contract required to persist cookies
+// for an indexer between two CLI invocations.
 type CookiePersister interface {
-	Load(indexerID string) (string, error) // renvoie "" si aucun cookie stocké
+	Load(indexerID string) (string, error) // returns "" if no cookie stored
 	Store(indexerID string, data string) error
 }
 
-// Options configure la construction d'un IndexerClient.
+// Options configures the construction of an IndexerClient.
 type Options struct {
 	IndexerID    string
-	Persister    CookiePersister // optionnel : sans persistance si nil
-	ProxyURL     string          // optionnel : "socks5://host:port" ou "http://host:port"
-	RequestDelay time.Duration   // délai minimum entre deux requêtes (0 = pas de limite)
-	Timeout      time.Duration   // défaut 20s si 0
-	MaxRetries   int             // défaut 3 si 0
+	Persister    CookiePersister // optional: no persistence if nil
+	ProxyURL     string          // optional: "socks5://host:port" or "http://host:port"
+	RequestDelay time.Duration   // minimum delay between two requests (0 = no limit)
+	Timeout      time.Duration   // default 20s if 0
+	MaxRetries   int             // default 3 if 0
 }
 
-// IndexerClient encapsule un *http.Client avec cookies persistés, rate
-// limiting et retries, propre à un indexeur donné.
+// IndexerClient wraps an *http.Client with persistent cookies, rate
+// limiting, and retries, specific to a given indexer.
 type IndexerClient struct {
 	indexerID  string
 	httpClient *http.Client
@@ -44,7 +44,7 @@ type IndexerClient struct {
 	maxRetries int
 }
 
-// New construit un IndexerClient à partir des options fournies.
+// New constructs an IndexerClient from the provided options.
 func New(opts Options) (*IndexerClient, error) {
 	timeout := opts.Timeout
 	if timeout == 0 {
@@ -96,8 +96,8 @@ func buildTransport(proxyURL string) (http.RoundTripper, error) {
 	case "http", "https":
 		return &http.Transport{Proxy: http.ProxyURL(u)}, nil
 	case "socks5":
-		// Limitation documentée (cf. revue architecture) : golang.org/x/net/proxy ne
-		// supporte que SOCKS5, pas SOCKS4 — un proxy SOCKS4 configuré échouera ici.
+		// Documented limitation (see architecture review): golang.org/x/net/proxy only
+		// supports SOCKS5, not SOCKS4 — a configured SOCKS4 proxy will fail here.
 		dialer, err := proxy.FromURL(u, proxy.Direct)
 		if err != nil {
 			return nil, fmt.Errorf("building socks5 dialer: %w", err)
@@ -112,8 +112,8 @@ func buildTransport(proxyURL string) (http.RoundTripper, error) {
 	}
 }
 
-// Do exécute la requête avec rate limiting et retries (backoff exponentiel
-// sur erreurs réseau/5xx uniquement, jamais sur 4xx).
+// Do executes the request with rate limiting and retries (exponential backoff
+// on network/5xx errors only, never on 4xx).
 func (c *IndexerClient) Do(req *http.Request) (*http.Response, error) {
 	if c.limiter != nil {
 		if err := c.limiter.Wait(req.Context()); err != nil {
@@ -143,7 +143,7 @@ func (c *IndexerClient) Do(req *http.Request) (*http.Response, error) {
 			resp.Body.Close()
 			continue
 		}
-		// Persiste les cookies après chaque échange réussi (ex: login qui pose un cookie de session).
+		// Persists cookies after each successful exchange (e.g., login that sets a session cookie).
 		if err := c.jar.persist(); err != nil {
 			return resp, fmt.Errorf("persisting cookies: %w", err)
 		}
@@ -152,6 +152,6 @@ func (c *IndexerClient) Do(req *http.Request) (*http.Response, error) {
 	return nil, fmt.Errorf("indexer %s: giving up after %d attempts: %w", c.indexerID, c.maxRetries+1, lastErr)
 }
 
-// HTTPClient retourne le *http.Client sous-jacent, pour réutilisation directe
-// (ex: par le moteur Cardigann ou le module de login).
+// HTTPClient returns the underlying *http.Client for direct reuse
+// (e.g., by the Cardigann engine or the login module).
 func (c *IndexerClient) HTTPClient() *http.Client { return c.httpClient }

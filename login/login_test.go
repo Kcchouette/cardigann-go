@@ -106,10 +106,10 @@ func TestLogin_CookieMethod(t *testing.T) {
 	}
 }
 
-// TestLogin_CookieMethod_ConcurrentNilJar reproduit le scénario où plusieurs
-// Login("cookie") concurrents partagent le même *http.Client sans Jar
-// préexistant : loginCookie doit créer le jar par défaut sans data race
-// (vérifié par `go test -race`) ni perte de cookies.
+// TestLogin_CookieMethod_ConcurrentNilJar reproduces the scenario where multiple
+// concurrent Login("cookie") calls share the same *http.Client without a
+// pre-existing Jar: loginCookie must create the default jar without data race
+// (verified by `go test -race`) or cookie loss.
 func TestLogin_CookieMethod_ConcurrentNilJar(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{Method: "cookie"},

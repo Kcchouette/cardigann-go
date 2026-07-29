@@ -1,6 +1,6 @@
-// Package torznab génère des réponses XML au format Torznab-compatible
-// (https://torznab.github.io/schemas/2015/feed) pour l'interopérabilité
-// avec les clients type Sonarr/Radarr/Prowlarr.
+// Package torznab generates Torznab-compatible XML responses
+// (https://torznab.github.io/schemas/2015/feed) for interoperability
+// with clients like Sonarr/Radarr/Prowlarr.
 package torznab
 
 import (
@@ -99,16 +99,16 @@ func WriteReleases(w io.Writer, releases []release.Release, indexerName string) 
 	return nil
 }
 
-// releaseGUID dérive un identifiant Torznab discriminant pour r. Utiliser
-// r.Title seul (comportement précédent) fait collisionner deux releases de
-// même titre (reposts/doublons fréquents sur les trackers) : les clients
-// Torznab (Sonarr/Radarr/NZBHydra) dédupliquent sur le GUID et perdraient
-// silencieusement l'un des deux résultats légitimes.
+// releaseGUID derives a unique Torznab GUID for r. Using r.Title alone
+// (previous behavior) causes collisions when two releases share the same
+// title (frequent reposts/duplicates on trackers): Torznab clients
+// (Sonarr/Radarr/NZBHydra) deduplicate on GUID and would silently drop one
+// of the two legitimate results.
 //
-// InfoHash, quand disponible, est déjà un identifiant stable et unique par
-// torrent : on le préfère. À défaut, on dérive un hash du triplet
-// Title+DownloadLink+Details, qui distingue les reposts de même titre tant
-// qu'ils ont un lien de téléchargement ou des détails différents.
+// InfoHash, when available, is already a stable and unique identifier per
+// torrent: we prefer it. Otherwise, we derive a hash from the triplet
+// Title+DownloadLink+Details, which distinguishes reposts of the same title
+// as long as they have a different download link or details.
 func releaseGUID(r release.Release) string {
 	if r.InfoHash != "" {
 		return r.InfoHash

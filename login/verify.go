@@ -11,8 +11,8 @@ import (
 	"github.com/Kcchouette/cardigann-go/selector"
 )
 
-// checkLoginErrors inspecte le corps de la réponse de login à la recherche
-// des sélecteurs `login.error` : leur présence signale un échec d'authentification.
+// checkLoginErrors inspects the login response body for `login.error`
+// selectors: their presence signals an authentication failure.
 func checkLoginErrors(body string, errorSelectors []cmodel.ErrorSelector) error {
 	err := selector.CheckErrors(body, errorSelectors)
 	if err != nil {
@@ -21,8 +21,8 @@ func checkLoginErrors(body string, errorSelectors []cmodel.ErrorSelector) error 
 	return nil
 }
 
-// verifyTest effectue une requête GET sur login.test.path et vérifie la
-// présence du sélecteur attendu (indicateur de session authentifiée).
+// verifyTest sends a GET request to login.test.path and checks for the
+// expected selector (indicator of an authenticated session).
 func verifyTest(ctx context.Context, client *http.Client, baseURL string, test cmodel.Test) error {
 	testURL := httputil.ResolveURL(baseURL, test.Path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL, nil)

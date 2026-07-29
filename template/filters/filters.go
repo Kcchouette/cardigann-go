@@ -1,10 +1,10 @@
-// Package filters implémente le pipeline de filtres de post-traitement
-// Cardigann (distinct du moteur de template) appliqué aux valeurs de champs
-// extraites (`fields.<name>.filters`).
+// Package filters implements the Cardigann post-processing filter pipeline
+// (distinct from the template engine) applied to extracted field values
+// (`fields.<name>.filters`).
 //
-// Liste volontairement réduite à un socle de filtres réellement fréquents
-// dans le corpus (Slice B du MVP) ; d'autres filtres seront ajoutés au fil
-// des définitions réelles rencontrées (Slice E).
+// Intentionally limited to a core set of filters actually frequent in the
+// corpus (Slice B of the MVP); more filters will be added as real-world
+// definitions are encountered (Slice E).
 package filters
 
 import (
@@ -22,30 +22,28 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// compiledRegex mémorise le résultat (succès ou échec) de la compilation
-// d'un pattern regex, pour être mis en cache sans jamais exposer un
-// *regexp.Regexp nil brut (qui paniquerait si utilisé par erreur).
+// compiledRegex caches the result (success or failure) of compiling a regex
+// pattern, stored in the cache without ever exposing a raw nil
+// *regexp.Regexp (which would panic if used by mistake).
 type compiledRegex struct {
 	re  *regexp.Regexp
 	err error
 }
 
-// regexCache mémorise les regex déjà compilées (succès et échecs), indexées
-// par leur pattern brut, pour éviter de recompiler le même pattern à chaque
-// ligne extraite (reReplace/regexpExtract sont appelés par ligne x champ).
+// regexCache caches already-compiled regexes (successes and failures), indexed
+// by their raw pattern, to avoid recompiling the same pattern on every
+// extracted line (reReplace/regexpExtract are called per line x field).
 //
-// Hypothèse de dimensionnement : les patterns proviennent des filtres
-// définis dans les définitions Cardigann (YAML) chargées, donc leur
-// cardinalité est bornée par le corpus de définitions. Registry/Apply étant
-// exportés, un appelant qui générerait des patterns dynamiquement à partir
-// d'entrées non bornées ferait grossir ce cache indéfiniment ; ce n'est pas
-// l'usage prévu.
+// Sizing assumption: patterns come from filters defined in loaded Cardigann
+// definitions (YAML), so their cardinality is bounded by the definitions
+// corpus. Since Registry/Apply are exported, a caller that generated patterns
+// dynamically from unbounded input would grow this cache indefinitely; that
+// is not the intended use.
 var regexCache sync.Map // string -> compiledRegex
 
-// compileRegex retourne le regexp compilé pour pattern, en réutilisant le
-// cache s'il existe déjà (y compris pour un pattern précédemment invalide,
-// afin de ne pas retenter Compile à chaque appel sur un pattern qui échoue
-// systématiquement).
+// compileRegex returns the compiled regexp for pattern, reusing the cache if
+// it already exists (including for a previously invalid pattern, so we don't
+// retry Compile on every call for a pattern that fails systematically).
 func compileRegex(pattern string) (*regexp.Regexp, error) {
 	if cached, ok := regexCache.Load(pattern); ok {
 		c := cached.(compiledRegex)
@@ -57,10 +55,10 @@ func compileRegex(pattern string) (*regexp.Regexp, error) {
 	return c.re, c.err
 }
 
-// FilterFunc applique un filtre nommé à une valeur, avec ses arguments positionnels.
+// FilterFunc applies a named filter to a value with its positional arguments.
 type FilterFunc func(value string, args []string) (string, error)
 
-// Registry est la table des filtres disponibles, indexée par nom Cardigann.
+// Registry is the table of available filters, indexed by Cardigann name.
 var Registry = map[string]FilterFunc{
 	"trim":        trim,
 	"tolower":     toLower,
@@ -83,10 +81,10 @@ var Registry = map[string]FilterFunc{
 	"fuzzytime":   fuzzyTime,
 	"diacritics":  diacritics,
 	"validate":    validate,
-	"timeparse":   dateParse, // alias de dateparse
+	"timeparse":   dateParse, // alias of dateparse
 }
 
-// Apply exécute une chaîne de filtres sur une valeur, dans l'ordre.
+// Apply executes a chain of filters on a value, in order.
 func Apply(value string, steps []Step) (string, error) {
 	for _, step := range steps {
 		fn, ok := Registry[step.Name]
@@ -102,7 +100,7 @@ func Apply(value string, steps []Step) (string, error) {
 	return value, nil
 }
 
-// Step représente une étape du pipeline (nom de filtre + arguments positionnels).
+// Step represents a pipeline step (filter name + positional arguments).
 type Step struct {
 	Name string
 	Args []string
@@ -131,8 +129,8 @@ func reReplace(v string, args []string) (string, error) {
 	}
 	re, err := compileRegex(args[0])
 	if err != nil {
-		// Si la regex contient des features PCRE non supportées (lookahead, etc.),
-		// retourner la valeur originale sans erreur.
+		// If the regex contains unsupported PCRE features (lookahead, etc.),
+		// return the original value without error.
 		return v, nil
 	}
 	return re.ReplaceAllString(v, args[1]), nil
@@ -216,18 +214,18 @@ func queryString(v string, args []string) (string, error) {
 	return u.Query().Get(args[0]), nil
 }
 
-// dateLayouts liste les formats de date rencontrés dans les définitions réelles.
-// Choix déterministe (pas de dépendance non maintenue type araddon/dateparse) :
-// on tente chaque layout dans l'ordre jusqu'à un succès.
+// dateLayouts lists the date formats encountered in real definitions.
+// Deterministic choice (no unmaintained dependency like araddon/dateparse):
+// try each layout in order until one succeeds.
 var dateLayouts = []string{
 	time.RFC1123Z,
 	time.RFC1123,
 	time.RFC3339,
 	"2006-01-02 15:04:05",
 	"2006-01-02T15:04:05",
-	"2006-01-02T15:04:05.999999",        // Format avec microsecondes
-	"2006-01-02T15:04:05.999999 -07:00", // Format avec microsecondes et timezone
-	"2006-01-02T15:04:05.999999-07:00",  // Sans espace avant timezone
+	"2006-01-02T15:04:05.999999",        // Format with microseconds
+	"2006-01-02T15:04:05.999999 -07:00", // Format with microseconds and timezone
+	"2006-01-02T15:04:05.999999-07:00",  // No space before timezone
 	"2006-01-02",
 	"02 Jan 2006",
 	"Mon, 02 Jan 2006 15:04:05 -0700",
@@ -257,15 +255,15 @@ func jsonParse(v string, args []string) (string, error) {
 	return result.String(), nil
 }
 
-// andMatch est un filtre row-level qui vérifie que tous les mots-clés sont
-// présents dans la valeur. Il ne peut pas être utilisé en field-level car
-// il nécessite les mots-clés de la recherche (passés via ApplyAndMatch).
+// andMatch is a row-level filter that verifies all keywords are present in
+// the value. It cannot be used at field level because it requires the search
+// keywords (passed via ApplyAndMatch).
 func andMatch(v string, args []string) (string, error) {
 	return "", fmt.Errorf("andmatch is a row-level filter and cannot be used in field filters; use it in rows.filters instead")
 }
 
-// ApplyAndMatch vérifie que tous les mots-clés sont présents dans la valeur.
-// Utilisé par le moteur pour les filtres row-level de type andmatch.
+// ApplyAndMatch verifies that all keywords are present in the value.
+// Used by the engine for row-level andmatch filters.
 func ApplyAndMatch(v string, keywords string) bool {
 	if keywords == "" {
 		return true
@@ -279,13 +277,12 @@ func ApplyAndMatch(v string, keywords string) bool {
 	return true
 }
 
-// reTimeAgo matche les expressions "X unit(s) ago" pour timeAgo. Regex
-// constante : compilée une seule fois au chargement du package plutôt qu'à
-// chaque appel de timeAgo.
+// reTimeAgo matches "X unit(s) ago" expressions for timeAgo. Constant regex:
+// compiled once at package load rather than on every timeAgo call.
 var reTimeAgo = regexp.MustCompile(`^(\d+)\s+(minute|hour|day|week|month|year)s?\s*(?:ago)?$`)
 
-// timeAgo convertit des expressions de temps relatif en timestamps RFC3339.
-// Supporte : "X minutes/hours/days/weeks/months/years ago",
+// timeAgo converts relative time expressions to RFC3339 timestamps.
+// Supports: "X minutes/hours/days/weeks/months/years ago",
 // "just now", "yesterday".
 func timeAgo(v string, _ []string) (string, error) {
 	v = strings.TrimSpace(strings.ToLower(v))
@@ -330,8 +327,8 @@ func timeAgo(v string, _ []string) (string, error) {
 	return now.Add(-d).Format(time.RFC3339), nil
 }
 
-// fuzzyTime convertit des expressions temporelles floues en timestamps RFC3339.
-// Supporte : "today", "yesterday", "just now", et les formats de date abrégés.
+// fuzzyTime converts fuzzy time expressions to RFC3339 timestamps.
+// Supports: "today", "yesterday", "just now", and abbreviated date formats.
 func fuzzyTime(v string, _ []string) (string, error) {
 	v = strings.TrimSpace(strings.ToLower(v))
 	now := time.Now()
@@ -381,18 +378,18 @@ func fuzzyTime(v string, _ []string) (string, error) {
 	return "", fmt.Errorf("fuzzytime: cannot parse %q", original)
 }
 
-// reOrdinalSuffixes matche les suffixes ordinaux (st, nd, rd, th) pour
-// stripOrdinalSuffixes. Regex constante : compilée une seule fois.
+// reOrdinalSuffixes matches ordinal suffixes (st, nd, rd, th) for
+// stripOrdinalSuffixes. Constant regex: compiled once.
 var reOrdinalSuffixes = regexp.MustCompile(`(\d)(st|nd|rd|th)\b`)
 
-// stripOrdinalSuffixes supprime les suffixes ordinaux (st, nd, rd, th) d'une chaîne.
-// Ex: "Jan 1st '26" → "Jan 1 '26", "Jul. 28th '26" → "Jul. 28 '26"
+// stripOrdinalSuffixes removes ordinal suffixes (st, nd, rd, th) from a string.
+// E.g.: "Jan 1st '26" -> "Jan 1 '26", "Jul. 28th '26" -> "Jul. 28 '26"
 func stripOrdinalSuffixes(s string) string {
 	return reOrdinalSuffixes.ReplaceAllString(s, "$1")
 }
 
-// diacritics supprime les diacritiques (accents, cédilles, etc.) d'une chaîne.
-// Décompose d'abord en NFD (é → e + ́) puis supprime les marqueurs de combinaison.
+// diacritics removes diacritics (accents, cedillas, etc.) from a string.
+// First decomposes to NFD then removes combining marks.
 func diacritics(v string, _ []string) (string, error) {
 	// Decompose to NFD: é (U+00E9) → e (U+0065) + combining acute (U+0301)
 	decomposed := norm.NFD.String(v)
@@ -406,8 +403,8 @@ func diacritics(v string, _ []string) (string, error) {
 	return b.String(), nil
 }
 
-// validate vérifie que la valeur fait partie d'une allowlist séparée par virgules.
-// Retourne la valeur si elle matche, chaîne vide sinon.
+// validate checks that the value is in a comma-separated allowlist.
+// Returns the value if it matches, empty string otherwise.
 func validate(v string, args []string) (string, error) {
 	if len(args) < 1 {
 		return "", fmt.Errorf("validate requires 1 arg (comma-separated allowlist)")

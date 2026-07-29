@@ -328,8 +328,8 @@ func TestDateParse_Microseconds(t *testing.T) {
 }
 
 func TestReReplace_InvalidRegexRepeated(t *testing.T) {
-	// Le pattern invalide doit être re-testé (via le cache d'échec) sans
-	// jamais paniquer, même appelé plusieurs fois sur le même pattern.
+	// The invalid pattern must be re-tested (via the failure cache) without
+	// ever panicking, even when called multiple times on the same pattern.
 	for i := 0; i < 5; i++ {
 		got, err := Apply("test", []Step{{Name: "re_replace", Args: []string{`[invalid`, ""}}})
 		if err != nil {
@@ -340,8 +340,8 @@ func TestReReplace_InvalidRegexRepeated(t *testing.T) {
 		}
 	}
 
-	// regexpExtract doit renvoyer une erreur (pas paniquer) sur le même
-	// pattern invalide mis en cache par l'appel précédent à re_replace.
+	// regexpExtract must return an error (not panic) on the same invalid
+	// pattern cached by the previous re_replace call.
 	if _, err := Apply("test", []Step{{Name: "regexp", Args: []string{`[invalid`}}}); err == nil {
 		t.Fatal("expected error for invalid regexp pattern")
 	}

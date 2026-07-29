@@ -9,27 +9,27 @@ import (
 	"sync"
 )
 
-// cookieJar enveloppe un cookiejar.Jar standard (en mémoire seulement, cf.
-// limitation documentée) avec une persistance explicite vers SQLite entre
-// deux invocations CLI du même indexeur.
+// cookieJar wraps a standard cookiejar.Jar (in-memory only, see documented
+// limitation) with explicit persistence to SQLite between two CLI
+// invocations of the same indexer.
 type cookieJar struct {
 	mu        sync.Mutex
 	inner     *cookiejar.Jar
 	indexerID string
 	persister CookiePersister
-	lastURLs  map[string]struct{} // origines vues, pour ré-extraire les cookies à persister
+	lastURLs  map[string]struct{} // seen origins, for re-extracting cookies to persist
 
-	// generation est incrémenté à chaque mutation de l'état des cookies
-	// (SetCookies). persistedGen mémorise la dernière génération réellement
-	// écrite via CookiePersister.Store. persist() ne réécrit que si
-	// generation != persistedGen, ce qui évite une écriture (souvent SQLite)
-	// après chaque requête HTTP réussie alors que rien n'a changé.
+	// generation is incremented on each mutation of cookie state
+	// (SetCookies). persistedGen remembers the last generation actually
+	// written via CookiePersister.Store. persist() only rewrites when
+	// generation != persistedGen, avoiding an often-SQLite write
+	// after each successful HTTP request when nothing has changed.
 	generation   uint64
 	persistedGen uint64
 }
 
-// persistedCookie est la forme sérialisée d'un cookie, indépendante de l'URL
-// d'origine exacte (on rejoue le cookie sur son Domain/Path déclarés).
+// persistedCookie is the serialized form of a cookie, independent of the exact
+// source URL (the cookie is replayed on its declared Domain/Path).
 type persistedCookie struct {
 	URL     string         `json:"url"`
 	Cookies []*http.Cookie `json:"cookies"`
@@ -64,12 +64,11 @@ func originOf(u *url.URL) string {
 	return u.Scheme + "://" + u.Host + "/"
 }
 
-// load recharge les cookies précédemment persistés pour cet indexeur (no-op
-// si aucun persister n'est configuré ou si aucun cookie n'existe encore).
-// Les origines rechargées sont aussi enregistrées dans lastURLs : sans ça,
-// un persist() déclenché après usage d'une seule origine écraserait l'état
-// persisté et perdrait les cookies restaurés des autres origines jamais
-// recontactées durant la session.
+// load reloads previously persisted cookies for this indexer (no-op if no
+// persister is configured or if no cookie exists yet). The reloaded origins
+// are also registered in lastURLs: without this, a persist() triggered after
+// using only one origin would overwrite the persisted state and lose the
+// restored cookies from other origins never contacted during the session.
 func (j *cookieJar) load() error {
 	if j.persister == nil {
 		return nil
@@ -93,20 +92,19 @@ func (j *cookieJar) load() error {
 		j.mu.Lock()
 		j.lastURLs[originOf(u)] = struct{}{}
 		j.mu.Unlock()
-		// Utilise directement inner.SetCookies (pas j.SetCookies) : recharger
-		// un état déjà persisté ne doit pas être considéré comme une
-		// mutation "sale" nécessitant une re-persistance immédiate.
+		// Uses inner.SetCookies directly (not j.SetCookies): reloading an
+		// already persisted state must not be considered a "dirty" mutation
+		// requiring immediate re-persistence.
 		j.inner.SetCookies(u, entry.Cookies)
 	}
 	return nil
 }
 
-// persist sauvegarde les cookies courants pour toutes les origines vues
-// pendant la session, afin qu'un futur `cardigann-go` (nouveau
-// process) puisse les recharger. N'effectue une écriture réelle
-// (CookiePersister.Store) que si l'état a changé depuis le dernier appel
-// réussi (cf. generation/persistedGen), afin d'éviter une écriture par
-// requête HTTP.
+// persist saves the current cookies for all origins seen during the session,
+// so a future cardigann-go (new process) can reload them. Only performs a
+// real write (CookiePersister.Store) if the state has changed since the last
+// successful call (see generation/persistedGen), to avoid a write per HTTP
+// request.
 func (j *cookieJar) persist() error {
 	if j.persister == nil {
 		return nil
@@ -115,7 +113,7 @@ func (j *cookieJar) persist() error {
 	j.mu.Lock()
 	genAtStart := j.generation
 	if genAtStart == j.persistedGen {
-		// Rien n'a changé depuis la dernière persistance réussie.
+		// Nothing has changed since the last successful persistence.
 		j.mu.Unlock()
 		return nil
 	}
@@ -131,9 +129,9 @@ func (j *cookieJar) persist() error {
 		if err != nil {
 			continue
 		}
-		// Toujours inclure l'origine, même sans cookie courant : un cookie
-		// supprimé/expiré doit être reflété dans l'état persisté, sinon il
-		// resterait indéfiniment rechargé depuis un ancien persist().
+		// Always include the origin, even without current cookies: a deleted/
+		// expired cookie must be reflected in the persisted state, otherwise it
+		// would be indefinitely reloaded from an old persist().
 		entries = append(entries, persistedCookie{URL: raw, Cookies: j.inner.Cookies(u)})
 	}
 
@@ -146,10 +144,10 @@ func (j *cookieJar) persist() error {
 	}
 
 	j.mu.Lock()
-	// Ne marque "propre" que si aucune nouvelle mutation n'a eu lieu pendant
-	// la sérialisation/l'écriture ci-dessus ; sinon la prochaine persist()
-	// détectera à nouveau un état "sale" et retentera (pas de mutation
-	// perdue en cas d'écriture concurrente).
+	// Only marks "clean" if no new mutation occurred during the
+	// serialization/write above; otherwise the next persist() will
+	// detect a "dirty" state again and retry (no mutation lost on
+	// concurrent write).
 	if j.generation == genAtStart {
 		j.persistedGen = genAtStart
 	}

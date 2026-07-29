@@ -1,8 +1,7 @@
-// Package login implémente le moteur d'authentification Cardigann :
-// méthodes `form`, `cookie`, `get` et `oneurl` supportées. Le résultat
-// d'un login réussi est simplement les cookies posés sur le *http.Client
-// fourni (généralement un httpclient.IndexerClient avec persistance SQLite
-// en amont).
+// Package login implements the Cardigann authentication engine:
+// supported methods are `form`, `cookie`, `get`, and `oneurl`. The result
+// of a successful login is simply the cookies set on the provided *http.Client
+// (typically an httpclient.IndexerClient with SQLite persistence upstream).
 package login
 
 import (
@@ -16,17 +15,17 @@ import (
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
 )
 
-// ErrLoginFailed est retourné quand l'indexeur signale explicitement un échec
-// (via un sélecteur `login.error`) ou que la vérification post-login échoue.
+// ErrLoginFailed is returned when the indexer explicitly signals a failure
+// (via a `login.error` selector) or when post-login verification fails.
 type ErrLoginFailed struct {
 	Reason string
 }
 
 func (e *ErrLoginFailed) Error() string { return fmt.Sprintf("login failed: %s", e.Reason) }
 
-// Login authentifie client sur l'indexeur décrit par def, selon def.Login.Method.
-// baseURL est l'URL de base de l'indexeur (un des def.Links), config contient
-// les valeurs saisies par l'utilisateur pour les `settings` (identifiants...).
+// Login authenticates client against the indexer described by def, using def.Login.Method.
+// baseURL is the base URL of the indexer (one of def.Links), config contains
+// the user-entered values for the `settings` (credentials, etc.).
 func Login(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
 	switch def.Login.Method {
 	case "", "none":
@@ -44,16 +43,16 @@ func Login(ctx context.Context, client *http.Client, def cmodel.IndexerDefinitio
 	}
 }
 
-// jarInitMu protège la lecture-puis-écriture de client.Jar dans loginCookie
-// (créer un jar par défaut s'il n'y en a pas). Sans ce verrou, deux appels
-// Login() concurrents partageant le même *http.Client (ex: un client HTTP
-// réutilisé entre plusieurs Provider) pourraient déclencher une race sur ce
-// champ. Le login lui-même reste peu fréquent (une fois par session logique
-// côté Provider), donc ce verrou global n'a pas d'impact perf notable.
+// jarInitMu protects the read-then-write of client.Jar in loginCookie
+// (creating a default jar if none exists). Without this lock, two concurrent
+// Login() calls sharing the same *http.Client (e.g., an HTTP client reused
+// across multiple Providers) could race on this field. Login itself is
+// infrequent (once per logical session on the Provider side), so this global
+// lock has no notable performance impact.
 var jarInitMu sync.Mutex
 
-// loginCookie pose directement la valeur de cookie fournie par l'utilisateur
-// (config["cookie"], format "name1=value1; name2=value2") sur baseURL.
+// loginCookie directly sets the cookie value provided by the user
+// (config["cookie"], format "name1=value1; name2=value2") on baseURL.
 func loginCookie(client *http.Client, baseURL string, config map[string]string) error {
 	raw := config["cookie"]
 	if raw == "" {

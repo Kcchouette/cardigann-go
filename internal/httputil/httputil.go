@@ -1,12 +1,12 @@
-// Package httputil fournit des utilitaires HTTP partagés entre les packages
-// engine et login pour éviter la duplication de logique commune.
+// Package httputil provides shared HTTP utilities between the engine and login
+// packages to avoid duplicating common logic.
 package httputil
 
 import "strings"
 
-// ResolveURL résout un chemin relatif ou absolu par rapport à une URL de base.
-// Si le path commence par "http://" ou "https://", il est retourné tel quel.
-// Sinon, il est concaténé à la base en normalisant les slashes.
+// ResolveURL resolves a relative or absolute path against a base URL.
+// If the path starts with "http://" or "https://", it is returned as-is.
+// Otherwise it is concatenated to the base with normalized slashes.
 func ResolveURL(baseURL, path string) string {
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		return path

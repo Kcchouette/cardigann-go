@@ -21,8 +21,8 @@ type downloadResult struct {
 	Title    string
 }
 
-// resolveDownload résout le lien réel de téléchargement à partir de la définition
-// download de la ligne. Si aucun download n'est défini, retourne nil.
+// resolveDownload resolves the actual download link from the row's download
+// definition. If no download is defined, returns nil.
 func (p *Provider) resolveDownload(ctx context.Context, client interface {
 	Do(*http.Request) (*http.Response, error)
 }, row selector.Node, baseURL string, rctx tmpl.Context) (*downloadResult, error) {
@@ -56,7 +56,7 @@ func (p *Provider) resolveDownload(ctx context.Context, client interface {
 				method = http.MethodGet
 			}
 
-			// Rendre les inputs (sans filtrage des valeurs vides/"false")
+			// Render inputs (without empty/"false" value filtering)
 			renderedInputs, _, err := renderInputs(dl.Before.Inputs, rctx)
 			if err != nil {
 				return nil, err

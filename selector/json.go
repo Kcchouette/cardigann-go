@@ -6,12 +6,12 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// NewJSONDocument prépare un contenu JSON pour des sélecteurs de type gjson path.
+// NewJSONDocument prepares JSON content for gjson path selectors.
 //
-// Limitation documentée (cf. revue architecture) : gjson n'est pas un moteur
-// JSONPath complet équivalent à ce qu'utilisent certaines définitions
-// Cardigann ; les expressions les plus avancées (filtres `?()`, unions
-// complexes) ne sont pas garanties de fonctionner à l'identique.
+// Documented limitation (see architecture review): gjson is not a complete
+// JSONPath engine equivalent to what some Cardigann definitions use; the
+// most advanced expressions (`?()` filters, complex unions) are not
+// guaranteed to work identically.
 func NewJSONDocument(json string) (Document, error) {
 	if !gjson.Valid(json) {
 		return nil, fmt.Errorf("invalid json document")
@@ -24,7 +24,7 @@ type jsonDocument struct {
 }
 
 func (d *jsonDocument) Find(path string) ([]Node, error) {
-	// Cas spécial : "$" signifie "tous les éléments du tableau racine"
+	// Special case: "$" means "all elements of the root array"
 	if path == "$" {
 		result := gjson.Parse(d.raw)
 		if result.Exists() && result.IsArray() {
@@ -35,7 +35,7 @@ func (d *jsonDocument) Find(path string) ([]Node, error) {
 			})
 			return nodes, nil
 		}
-		// Si ce n'est pas un tableau, retourner l'élément racine
+		// If not an array, return the root element
 		return []Node{&jsonNode{result: result}}, nil
 	}
 
@@ -70,8 +70,8 @@ func (n *jsonNode) Attr(name string) (string, bool) {
 	return sub.String(), true
 }
 
-// Find ré-applique un sélecteur gjson relativement à ce noeud (sous-sélection
-// d'un champ à l'intérieur d'une ligne de résultat JSON).
+// Find re-applies a gjson selector relative to this node (sub-selecting
+// a field inside a JSON result row).
 func (n *jsonNode) Find(selector string) ([]Node, error) {
 	result := n.result.Get(selector)
 	if !result.Exists() {

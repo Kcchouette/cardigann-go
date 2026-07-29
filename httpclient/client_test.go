@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// memPersister est une implémentation en mémoire de CookiePersister pour les
-// tests (simule ce que ferait internal/store avec SQLite entre deux process).
+// memPersister is an in-memory implementation of CookiePersister for testing
+// (simulates what internal/store would do with SQLite between two processes).
 type memPersister struct {
 	mu    sync.Mutex
 	store map[string]string
@@ -32,8 +32,8 @@ func (p *memPersister) Store(indexerID string, data string) error {
 	return nil
 }
 
-// storeCountingPersister enveloppe memPersister et compte les appels à
-// Store, pour vérifier la fréquence réelle de persistance.
+// storeCountingPersister wraps memPersister and counts Store calls
+// to verify the actual persistence frequency.
 type storeCountingPersister struct {
 	*memPersister
 	mu     sync.Mutex
@@ -63,7 +63,7 @@ func TestCookieJar_PersistSkippedWhenClean(t *testing.T) {
 
 	u, _ := url.Parse("https://tracker.example/")
 
-	// Premier persist sans aucune mutation de cookie : rien à écrire.
+	// First persist with no cookie mutation: nothing to write.
 	if err := jar.persist(); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
@@ -71,9 +71,9 @@ func TestCookieJar_PersistSkippedWhenClean(t *testing.T) {
 		t.Fatalf("expected 0 Store call before any cookie mutation, got %d", got)
 	}
 
-	// Un premier cookie posé : une seule écriture attendue même si on
-	// appelle persist() plusieurs fois de suite (simulateur de N requêtes
-	// HTTP successives sans nouveau cookie).
+	// A first cookie set: only one write expected even if persist()
+	// is called multiple times in a row (simulator of N consecutive HTTP
+	// requests without new cookies).
 	jar.SetCookies(u, []*http.Cookie{{Name: "session", Value: "abc"}})
 	for i := 0; i < 5; i++ {
 		if err := jar.persist(); err != nil {
@@ -84,7 +84,7 @@ func TestCookieJar_PersistSkippedWhenClean(t *testing.T) {
 		t.Fatalf("expected exactly 1 Store call after a single cookie mutation followed by repeated persist(), got %d", got)
 	}
 
-	// Une nouvelle mutation doit déclencher exactement une nouvelle écriture.
+	// A new mutation must trigger exactly one new write.
 	jar.SetCookies(u, []*http.Cookie{{Name: "session", Value: "def"}})
 	if err := jar.persist(); err != nil {
 		t.Fatalf("persist after mutation: %v", err)
@@ -108,8 +108,8 @@ func TestCookieJar_DeletedCookieIsPersisted(t *testing.T) {
 		t.Fatalf("expected persisted state to contain the cookie, got %q", raw)
 	}
 
-	// Suppression du cookie (MaxAge négatif = expiration immédiate) : l'état
-	// persisté doit refléter sa disparition, pas garder l'ancienne valeur.
+	// Cookie deletion (negative MaxAge = immediate expiration): the persisted
+	// state must reflect its removal, not keep the old value.
 	jar.SetCookies(u, []*http.Cookie{{Name: "session", Value: "", Path: "/", MaxAge: -1}})
 	if err := jar.persist(); err != nil {
 		t.Fatalf("persist after deletion: %v", err)
@@ -123,7 +123,7 @@ func TestCookieJar_DeletedCookieIsPersisted(t *testing.T) {
 func TestCookieJar_LoadThenPersistKeepsOtherOrigins(t *testing.T) {
 	persister := newMemPersister()
 
-	// Session précédente : cookies posés pour deux origines distinctes.
+	// Previous session: cookies set for two distinct origins.
 	first := newCookieJar("idx", persister)
 	uA, _ := url.Parse("https://tracker-a.example/")
 	uB, _ := url.Parse("https://tracker-b.example/")
@@ -133,8 +133,8 @@ func TestCookieJar_LoadThenPersistKeepsOtherOrigins(t *testing.T) {
 		t.Fatalf("persist: %v", err)
 	}
 
-	// Nouvelle session : recharge les cookies persistés, puis ne contacte
-	// (SetCookies/Cookies) que l'origine A.
+	// New session: reloads persisted cookies, then only contacts
+	// (SetCookies/Cookies) origin A.
 	second := newCookieJar("idx", persister)
 	if err := second.load(); err != nil {
 		t.Fatalf("load: %v", err)
@@ -143,9 +143,9 @@ func TestCookieJar_LoadThenPersistKeepsOtherOrigins(t *testing.T) {
 		t.Fatalf("expected origin B cookie restored after load, got %v", got)
 	}
 
-	// Une mutation sur A seule doit rendre l'état "sale" et déclencher un
-	// persist() qui ne doit PAS perdre les cookies de B (jamais recontactée
-	// dans cette session).
+	// A mutation on A alone must make the state "dirty" and trigger a
+	// persist() that must NOT lose B's cookies (never contacted again
+	// in this session).
 	second.SetCookies(uA, []*http.Cookie{{Name: "session", Value: "a-cookie-updated", Path: "/"}})
 	if err := second.persist(); err != nil {
 		t.Fatalf("persist: %v", err)
@@ -167,7 +167,7 @@ func TestIndexerClient_CookiePersistenceAcrossInstances(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		// /check : renvoie le cookie reçu dans le corps de la réponse.
+		// /check: returns the received cookie in the response body.
 		cookie, err := r.Cookie("session")
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -179,7 +179,7 @@ func TestIndexerClient_CookiePersistenceAcrossInstances(t *testing.T) {
 
 	persister := newMemPersister()
 
-	// Premier "process" : login, cookie posé et persisté.
+	// First process: login, cookie set and persisted.
 	client1, err := New(Options{IndexerID: "test-idx", Persister: persister})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -189,7 +189,7 @@ func TestIndexerClient_CookiePersistenceAcrossInstances(t *testing.T) {
 		t.Fatalf("first request: %v", err)
 	}
 
-	// Deuxième "process" (nouvelle instance) : doit recharger le cookie persisté.
+	// Second process (new instance): must reload the persisted cookie.
 	client2, err := New(Options{IndexerID: "test-idx", Persister: persister})
 	if err != nil {
 		t.Fatalf("New (second instance): %v", err)
@@ -226,7 +226,7 @@ func TestIndexerClient_RequestDelayEnforced(t *testing.T) {
 	}
 	elapsed := time.Since(start)
 
-	// 3 requêtes espacées d'au moins 200ms => au moins ~400ms au total.
+	// 3 requests spaced at least 200ms apart => at least ~400ms total.
 	if elapsed < 350*time.Millisecond {
 		t.Errorf("expected requestDelay to be enforced, elapsed only %v", elapsed)
 	}

@@ -15,10 +15,10 @@ import (
 	"github.com/Kcchouette/cardigann-go/template/filters"
 )
 
-// loginForm exécute un login par formulaire HTML : POST des inputs déclarés
-// vers l'URL de login, puis vérification via login.error et/ou login.test.
-// Si def.Login.Form est défini, le formulaire ciblé est sélectionné via ce
-// sélecteur CSS (action URL et extraction des inputs.scopeées à ce formulaire).
+// loginForm performs a login via HTML form: POST declared inputs to the login
+// URL, then verify via login.error and/or login.test. If def.Login.Form is
+// set, the targeted form is selected via this CSS selector (action URL and
+// extraction of inputs scoped to that form).
 func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
 	rctx := tmpl.Context{Config: config}
 

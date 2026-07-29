@@ -7,7 +7,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
-// NewHTMLDocument parse un contenu HTML pour des sélecteurs CSS (goquery).
+// NewHTMLDocument parses HTML content for CSS selectors (goquery).
 func NewHTMLDocument(html string) (Document, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
@@ -41,8 +41,8 @@ func (n *htmlNode) Attr(name string) (string, bool) {
 	return n.sel.Attr(name)
 }
 
-// Find ré-applique un sélecteur CSS relativement à ce noeud (sous-sélection
-// d'un champ à l'intérieur d'une ligne de résultat).
+// Find re-applies a CSS selector relative to this node (sub-selecting
+// a field inside a result row).
 func (n *htmlNode) Find(selector string) ([]Node, error) {
 	sub := n.sel.Find(selector)
 	nodes := make([]Node, 0, sub.Length())

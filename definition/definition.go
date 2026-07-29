@@ -1,9 +1,8 @@
-// Package model contient les structures Go correspondant au format YAML
-// Cardigann (schéma v11) utilisé par Prowlarr/Indexers.
+// Package definition contains the Go structs corresponding to the Cardigann
+// YAML format (schema v11) used by Prowlarr/Indexers.
 //
-// Volontairement tolérant : la plupart des champs sont optionnels
-// (`omitempty` côté YAML) car toutes les définitions n'utilisent pas
-// toutes les fonctionnalités du schéma.
+// Intentionally lenient: most fields are optional (`omitempty` on the YAML side)
+// because not all definitions use every feature of the schema.
 package definition
 
 import (
@@ -11,7 +10,7 @@ import (
 	"strings"
 )
 
-// IndexerDefinition représente une définition Cardigann complète (v11).
+// IndexerDefinition represents a complete Cardigann definition (v11).
 type IndexerDefinition struct {
 	ID          string   `yaml:"id"`
 	Name        string   `yaml:"name"`
@@ -32,14 +31,14 @@ type IndexerDefinition struct {
 	Extra    map[string]any `yaml:",inline"`
 }
 
-// IsUsenet indique si la définition produit des résultats usenet plutôt que torrent.
+// IsUsenet reports whether the definition produces usenet results rather than torrent.
 //
-// L'heuristique utilise deux signaux complémentaires :
-//  1. Le champ type: "usenet" (signal direct, mais rarement utilisé dans le corpus v11).
-//  2. La présence de catégories Newznab dans la plage 2000-8999 (signal usenet standard),
-//     avec une garde contre les faux positifs : on requiert au moins une catégorie dont
-//     la description contient un mot-clé usenet explicite (ex: "NZB", "Usenet"),
-//     OU que TOUS les categorymappings aient des IDs dans cette plage (indexeur purement usenet).
+// The heuristic uses two complementary signals:
+//  1. The type: "usenet" field (direct signal, but rarely used in the v11 corpus).
+//  2. The presence of Newznab categories in the 2000–8999 range (standard usenet signal),
+//     with a guard against false positives: at least one category whose description
+//     contains an explicit usenet keyword (e.g. "NZB", "Usenet") is required,
+//     or ALL categorymappings have IDs in this range (purely usenet indexer).
 func (d IndexerDefinition) IsUsenet() bool {
 	if d.Type == "usenet" {
 		return true
@@ -74,19 +73,19 @@ func (d IndexerDefinition) IsUsenet() bool {
 		}
 	}
 
-	// Indexeur purement usenet (toutes les catégories dans la plage Newznab)
-	// OU au moins une catégorie avec mot-clé usenet explicite.
+	// Purely usenet indexer (all categories in the Newznab range)
+	// or at least one category with an explicit usenet keyword.
 	return allInUsenetRange || hasUsenetKeyword
 }
 
-// Caps décrit les capacités de recherche/catégories de l'indexeur.
+// Caps describes the search/category capabilities of the indexer.
 type Caps struct {
 	CategoryMappings []CategoryMapping   `yaml:"categorymappings"`
 	Modes            map[string][]string `yaml:"modes"`
 	AllowRawSearch   bool                `yaml:"allowrawsearch"`
 }
 
-// CategoryMapping relie une catégorie native de l'indexeur à une catégorie Torznab/Newznab standard.
+// CategoryMapping maps a native indexer category to a standard Torznab/Newznab category.
 type CategoryMapping struct {
 	ID      string `yaml:"id"`
 	Cat     string `yaml:"cat"`
@@ -94,7 +93,7 @@ type CategoryMapping struct {
 	Default bool   `yaml:"default"`
 }
 
-// Setting décrit un champ de configuration exposé à l'utilisateur (identifiants, options...).
+// Setting describes a configuration field exposed to the user (credentials, options, etc.).
 type Setting struct {
 	Name    string `yaml:"name"`
 	Type    string `yaml:"type"` // text | password | checkbox | select | info | ...
@@ -102,7 +101,7 @@ type Setting struct {
 	Default string `yaml:"default"`
 }
 
-// Login décrit le mécanisme d'authentification de l'indexeur.
+// Login describes the authentication mechanism of the indexer.
 type Login struct {
 	Method         string                   `yaml:"method"`
 	Login          string                   `yaml:"login"`
@@ -116,24 +115,24 @@ type Login struct {
 	SubmitPath     string                   `yaml:"submitpath,omitempty"`
 }
 
-// ErrorSelector décrit un sélecteur permettant de détecter un échec de login.
+// ErrorSelector describes a selector used to detect a login failure.
 type ErrorSelector struct {
 	Selector string          `yaml:"selector"`
 	Message  MessageSelector `yaml:"message,omitempty"`
 }
 
-// MessageSelector décrit comment extraire le message d'erreur associé.
+// MessageSelector describes how to extract the associated error message.
 type MessageSelector struct {
 	Selector string `yaml:"selector"`
 }
 
-// Test décrit un moyen de vérifier qu'une session est valide (post-login).
+// Test describes a way to verify that a session is valid (post-login).
 type Test struct {
 	Path     string `yaml:"path"`
 	Selector string `yaml:"selector"`
 }
 
-// Search décrit comment effectuer une recherche et parser les résultats.
+// Search describes how to perform a search and parse the results.
 type Search struct {
 	Paths           []SearchPath        `yaml:"paths"`
 	Rows            Rows                `yaml:"rows"`
@@ -144,7 +143,7 @@ type Search struct {
 	Inputs          map[string]string   `yaml:"inputs,omitempty"`
 }
 
-// SearchPath décrit un template d'URL/paramètres de requête de recherche.
+// SearchPath describes a search request URL/parameter template.
 type SearchPath struct {
 	Path       string            `yaml:"path"`
 	Method     string            `yaml:"method"` // get | post
@@ -153,37 +152,37 @@ type SearchPath struct {
 	Categories []int             `yaml:"categories,omitempty"`
 }
 
-// ResponseInfo décrit le type de contenu attendu de la réponse (html par défaut, json, xml).
+// ResponseInfo describes the expected content type of the response (html by default, json, xml).
 type ResponseInfo struct {
 	Type string `yaml:"type"`
 }
 
-// Rows décrit comment sélectionner les lignes de résultats dans le document de réponse.
+// Rows describes how to select result rows in the response document.
 type Rows struct {
 	Selector string       `yaml:"selector"`
 	After    int          `yaml:"after"`
 	Filters  []FilterStep `yaml:"filters"`
 }
 
-// Field décrit comment extraire et transformer une valeur pour une ligne de résultat.
+// Field describes how to extract and transform a value for a result row.
 type Field struct {
 	Selector  string       `yaml:"selector"`
 	Attribute string       `yaml:"attribute"`
-	Text      string       `yaml:"text"` // valeur littérale/template au lieu d'un sélecteur
+	Text      string       `yaml:"text"` // literal/template value instead of a selector
 	Optional  bool         `yaml:"optional"`
 	Filters   []FilterStep `yaml:"filters"`
 }
 
-// FilterStep représente une étape du pipeline de filtres appliqué post-extraction
-// (ex: `re_replace`, `split`, `dateparse`...), avec ses arguments positionnels.
+// FilterStep represents a step in the post-extraction filter pipeline
+// (e.g. `re_replace`, `split`, `dateparse`...), with its positional arguments.
 type FilterStep struct {
 	Name string   `yaml:"name"`
 	Args []string `yaml:"args"`
 }
 
-// UnmarshalYAML supporte args comme string unique OU tableau de strings.
-// Compatible avec les définitions Prowlarr qui utilisent parfois une string
-// au lieu d'un tableau (ex: args: " +00:01" au lieu de args: [" +00:01"]).
+// UnmarshalYAML supports args as a single string OR a string array.
+// Compatible with Prowlarr definitions that sometimes use a string
+// instead of an array (e.g. args: " +00:01" instead of args: [" +00:01"]).
 func (f *FilterStep) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	type rawFilterStep struct {
 		Name string      `yaml:"name"`
@@ -208,7 +207,7 @@ func (f *FilterStep) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
-// SelectorField décrit un sélecteur CSS avec extraction d'attribut et filtres.
+// SelectorField describes a CSS selector with attribute extraction and filters.
 type SelectorField struct {
 	Selector  string       `yaml:"selector"`
 	Attribute string       `yaml:"attribute,omitempty"`
@@ -217,7 +216,7 @@ type SelectorField struct {
 	Filters   []FilterStep `yaml:"filters,omitempty"`
 }
 
-// Download décrit comment résoudre le lien réel de téléchargement (torrent/nzb) à partir d'une ligne.
+// Download describes how to resolve the real download link (torrent/nzb) from a row.
 type Download struct {
 	Selectors []DownloadSelector  `yaml:"selectors,omitempty"`
 	Method    string              `yaml:"method,omitempty"`
@@ -226,7 +225,7 @@ type Download struct {
 	Infohash  *DownloadInfohash   `yaml:"infohash,omitempty"`
 }
 
-// DownloadBefore décrit une requête intermédiaire à effectuer avant d'extraire le lien réel.
+// DownloadBefore describes an intermediate request to perform before extracting the real link.
 type DownloadBefore struct {
 	Path         string            `yaml:"path"`
 	Method       string            `yaml:"method"`
@@ -234,14 +233,14 @@ type DownloadBefore struct {
 	PathSelector *SelectorField    `yaml:"pathselector,omitempty"`
 }
 
-// DownloadInfohash décrit comment extraire le hash et le titre d'un torrent.
+// DownloadInfohash describes how to extract the hash and title of a torrent.
 type DownloadInfohash struct {
 	UseBeforeResponse bool          `yaml:"usebeforeresponse,omitempty"`
 	Hash              SelectorField `yaml:"hash"`
 	Title             SelectorField `yaml:"title,omitempty"`
 }
 
-// DownloadSelector décrit une étape de résolution du lien de téléchargement (ex: suivre une page intermédiaire).
+// DownloadSelector describes a download link resolution step (e.g. following an intermediate page).
 type DownloadSelector struct {
 	Selector          string       `yaml:"selector"`
 	Attribute         string       `yaml:"attribute,omitempty"`

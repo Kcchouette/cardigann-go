@@ -10,10 +10,10 @@ import (
 	"testing"
 )
 
-// buildFixtureTarball construit en mémoire un tarball .tar.gz imitant la
-// structure du dépôt Prowlarr/Indexers (dossier racine unique + définitions
-// sous definitions/<version>/), avec du contenu YAML entièrement inventé
-// pour le test (aucune définition réelle, aucun réseau).
+// buildFixtureTarball builds an in-memory .tar.gz tarball mimicking the
+// Prowlarr/Indexers repository structure (single root directory + definitions
+// under definitions/<version>/), with entirely fabricated YAML content
+// for testing (no real definitions, no network).
 func buildFixtureTarball(t *testing.T, entries map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -46,7 +46,7 @@ func TestFetcher_FetchVersion(t *testing.T) {
 	tarball := buildFixtureTarball(t, map[string]string{
 		"Indexers-abc123/definitions/v11/testtracker.yml": "id: testtracker\nname: TestTracker\n",
 		"Indexers-abc123/definitions/v11/other.yaml":      "id: other\nname: Other\n",
-		"Indexers-abc123/definitions/v10/legacy.yml":      "id: legacy\nname: Legacy\n", // autre version, doit être ignorée
+		"Indexers-abc123/definitions/v10/legacy.yml":      "id: legacy\nname: Legacy\n", // different version, should be ignored
 		"Indexers-abc123/README.md":                       "# not a definition",
 	})
 

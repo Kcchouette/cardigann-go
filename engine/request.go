@@ -8,8 +8,8 @@ import (
 	tmpl "github.com/Kcchouette/cardigann-go/template"
 )
 
-// renderInputs rend tous les inputs via le template et sépare $raw.
-// Retourne les inputs rendus et les paramètres $raw bruts.
+// renderInputs renders all inputs via the template and separates $raw.
+// Returns the rendered inputs and the raw $raw parameters.
 func renderInputs(inputs map[string]string, rctx tmpl.Context) (map[string]string, string, error) {
 	rendered := make(map[string]string, len(inputs))
 	var raw string
@@ -31,7 +31,7 @@ func renderInputs(inputs map[string]string, rctx tmpl.Context) (map[string]strin
 	return rendered, raw, nil
 }
 
-// appendRawParams ajoute les paramètres $raw encodés à une url.Values.
+// appendRawParams adds the encoded $raw parameters to a url.Values.
 func appendRawParams(values url.Values, raw string) {
 	for _, param := range strings.Split(raw, "&") {
 		if param == "" {
@@ -44,12 +44,12 @@ func appendRawParams(values url.Values, raw string) {
 	}
 }
 
-// filterInputs supprime les valeurs vides et "false" (truthy dans Go templates).
+// filterInputs removes empty and "false" values (truthy in Go templates).
 func filterInputs(rendered map[string]string) url.Values {
 	values := url.Values{}
 	for k, v := range rendered {
-		// Ignorer les paramètres vides ou "false" (évite les erreurs 400 sur certaines APIs)
-		// Note: "false" est truthy dans les templates Go, mais les APIs attendent pas de paramètre
+		// Skip empty or "false" parameters (avoids 400 errors on some APIs)
+		// Note: "false" is truthy in Go templates, but APIs do not expect the parameter
 		if v != "" && v != "false" {
 			values.Set(k, v)
 		}

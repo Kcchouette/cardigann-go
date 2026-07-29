@@ -10,10 +10,10 @@ import (
 )
 
 func TestWriteReleases_GuidNoCollisionOnSameTitle(t *testing.T) {
-	// Deux reposts avec le même titre mais des liens de téléchargement
-	// différents (cas fréquent sur les trackers) doivent avoir des GUID
-	// distincts, sans quoi les clients Torznab (Sonarr/Radarr) qui
-	// dédupliquent sur le GUID écarteraient l'un des deux résultats.
+	// Two reposts with the same title but different download links
+	// (common on trackers) must have distinct GUIDs, otherwise Torznab
+	// clients (Sonarr/Radarr) that deduplicate on GUID would drop one of
+	// the two results.
 	releases := []release.Release{
 		{Title: "Same.Title.2025", DownloadLink: "https://example.com/dl/1.torrent", Size: 100},
 		{Title: "Same.Title.2025", DownloadLink: "https://example.com/dl/2.torrent", Size: 100},

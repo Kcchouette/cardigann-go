@@ -1,6 +1,6 @@
-// Package defs synchronise les définitions Cardigann depuis le dépôt GitHub
-// Prowlarr/Indexers (jamais vendorisées ni redistribuées, cf. disclaimer
-// légal — uniquement mises en cache localement pour l'utilisateur final).
+// Package defs synchronizes Cardigann definitions from the GitHub repository
+// Prowlarr/Indexers (never vendored or redistributed, see legal disclaimer —
+// only cached locally for the end user).
 package defs
 
 import (
@@ -17,29 +17,29 @@ import (
 	"time"
 )
 
-// RawDefinition est une définition Cardigann encore non parsée, telle que
-// récupérée depuis le tarball du dépôt.
+// RawDefinition is an unparsed Cardigann definition, as retrieved from the
+// repository tarball.
 type RawDefinition struct {
-	ID   string // dérivé du nom de fichier, ex: "1337x" pour "1337x.yml"
+	ID   string // derived from the filename, e.g. "1337x" for "1337x.yml"
 	YAML string
-	SHA  string // sha256 hex du contenu, pour détection de changement/cache
+	SHA  string // hex-encoded sha256 of the content, for change detection/cache
 }
 
-// Fetcher télécharge les définitions Cardigann d'une version donnée
-// (ex: "v11") depuis un tarball GitHub (`codeload.github.com`), ce qui évite
-// la limite de rate-limit sévère de l'API GitHub Contents (60 req/h non-authentifié).
+// Fetcher downloads Cardigann definitions for a given version
+// (e.g. "v11") from a GitHub tarball (`codeload.github.com`), avoiding the
+// strict rate limit of the GitHub Contents API (60 req/h unauthenticated).
 type Fetcher struct {
 	HTTPClient *http.Client
 	Repo       string // "Prowlarr/Indexers"
 	Ref        string // branche/tag, ex: "master"
 
-	// URLOverride, si non vide, remplace l'URL calculée du tarball —
-	// utilisé par les tests pour pointer vers un serveur httptest local
-	// plutôt que vers le vrai GitHub.
+	// URLOverride, if non-empty, replaces the computed tarball URL —
+	// used by tests to point to a local httptest server
+	// instead of the real GitHub.
 	URLOverride string
 }
 
-// NewFetcher construit un Fetcher avec les valeurs par défaut du dépôt réel.
+// NewFetcher constructs a Fetcher with the real repository defaults.
 func NewFetcher() *Fetcher {
 	return &Fetcher{
 		HTTPClient: &http.Client{Timeout: 60 * time.Second},
@@ -55,8 +55,8 @@ func (f *Fetcher) tarballURL() string {
 	return fmt.Sprintf("https://codeload.github.com/%s/tar.gz/refs/heads/%s", f.Repo, f.Ref)
 }
 
-// FetchVersion télécharge le tarball complet et n'en extrait que les
-// définitions YAML situées sous `definitions/<version>/`.
+// FetchVersion downloads the full tarball and extracts only the
+// YAML definitions located under `definitions/<version>/`.
 func (f *Fetcher) FetchVersion(ctx context.Context, version string) ([]RawDefinition, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.tarballURL(), nil)
 	if err != nil {
@@ -81,9 +81,9 @@ func (f *Fetcher) FetchVersion(ctx context.Context, version string) ([]RawDefini
 
 	tr := tar.NewReader(gz)
 
-	// Les tarballs GitHub ont un dossier racine unique du type
-	// "Indexers-<sha>/", donc on matche sur le suffixe du chemin plutôt que
-	// sur un préfixe absolu.
+	// GitHub tarballs have a single root directory of the form
+	// "Indexers-<sha>/", so we match on the path suffix rather than
+	// an absolute prefix.
 	wantSuffix := path.Join("definitions", version) + "/"
 
 	var results []RawDefinition
@@ -106,14 +106,14 @@ func (f *Fetcher) FetchVersion(ctx context.Context, version string) ([]RawDefini
 		}
 		rel := normalized[idx+len(wantSuffix):]
 		if rel == "" || strings.Contains(rel, "/") {
-			continue // sous-dossier imprévu, on ignore
+			continue // unexpected subdirectory, skip
 		}
 		ext := path.Ext(rel)
 		if ext != ".yml" && ext != ".yaml" {
 			continue
 		}
 
-		content, err := io.ReadAll(io.LimitReader(tr, 4<<20)) // 4 MiB par définition, garde-fou.
+		content, err := io.ReadAll(io.LimitReader(tr, 4<<20)) // 4 MiB per definition, safeguard.
 		if err != nil {
 			return nil, fmt.Errorf("reading definition %q: %w", rel, err)
 		}

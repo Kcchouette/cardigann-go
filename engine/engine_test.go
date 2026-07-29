@@ -15,9 +15,9 @@ import (
 	"github.com/Kcchouette/cardigann-go/release"
 )
 
-// yamlFixture est une définition Cardigann v11 minimaliste inventée pour le
-// test (pas une définition réelle du dépôt Prowlarr/Indexers, afin de ne
-// dépendre d'aucun contenu externe ni réseau).
+// yamlFixture is a minimal Cardigann v11 definition invented for testing (not a
+// real definition from the Prowlarr/Indexers repo, so it depends on no external
+// content or network).
 const yamlFixture = `
 id: testtracker
 name: TestTracker
@@ -764,11 +764,11 @@ search:
 	}
 }
 
-// Test: appels Search() concurrents sur le même *Provider avec des mots-clés
-// différents. Vérifie l'absence de race (via `go test -race`) ET l'absence
-// de cross-contamination des résultats entre goroutines (chaque recherche
-// doit filtrer selon ses propres mots-clés, pas ceux d'une autre recherche
-// concurrente qui aurait écrasé un état partagé).
+// TestSearch_ConcurrentDistinctKeywords tests concurrent Search() calls on the
+// same *Provider with different keywords. Verifies no race (via `go test -race`)
+// AND no cross-contamination of results between goroutines (each search must
+// filter by its own keywords, not those of another concurrent search that may
+// have overwritten shared state).
 func TestSearch_ConcurrentDistinctKeywords(t *testing.T) {
 	yamlDef := `
 id: concurrenttracker
@@ -987,12 +987,12 @@ download:
 	}
 }
 
-// Test: la résolution du lien de téléchargement (before-request) pour
-// plusieurs lignes est effectuée en parallèle (bornée par
-// maxParallelExtract), pas séquentiellement ligne par ligne. Un avant-poste
-// artificiellement lent permet de vérifier que le temps total d'une
-// recherche à N lignes est très inférieur à N x latence-avant-poste, et que
-// plusieurs requêtes /api/info sont bien en vol simultanément.
+// TestSearch_ParallelDownloadResolution verifies that download link resolution
+// (before-request) for multiple rows is performed in parallel (bounded by
+// maxParallelExtract), not sequentially row by row. An artificially slow
+// endpoint ensures the total time for an N-row search is well below
+// N × before-request latency, and that multiple /api/info requests are in
+// flight simultaneously.
 func TestSearch_ParallelDownloadResolution(t *testing.T) {
 	yamlDef := `
 id: paralleltracker

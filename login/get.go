@@ -12,8 +12,8 @@ import (
 	tmpl "github.com/Kcchouette/cardigann-go/template"
 )
 
-// loginGet effectue un login par requête GET : les inputs déclarés sont envoyés
-// en paramètres d'URL (query string), puis vérification via login.error et/ou login.test.
+// loginGet performs a login via GET request: declared inputs are sent as URL
+// query parameters, then verified via login.error and/or login.test.
 func loginGet(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
 	rctx := tmpl.Context{Config: config}
 
@@ -66,9 +66,9 @@ func loginGet(ctx context.Context, client *http.Client, def cmodel.IndexerDefini
 	return nil
 }
 
-// loginOneURL effectue un login par une simple requête GET vers l'URL de login
-// sans aucun paramètre d'entrée. Utile pour les indexeurs qui utilisent un
-// cookie ou un token passé directement dans l'URL.
+// loginOneURL performs a login via a simple GET request to the login URL
+// without any input parameters. Useful for indexers that use a cookie or
+// token passed directly in the URL.
 func loginOneURL(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
 	rctx := tmpl.Context{Config: config}
 

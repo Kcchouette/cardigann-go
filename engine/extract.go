@@ -15,14 +15,14 @@ import (
 	"github.com/Kcchouette/cardigann-go/template/filters"
 )
 
-// maxParallelExtract borne le nombre de lignes traitées en parallèle par
-// parseResults. Chaque extraction peut déclencher une requête HTTP
-// supplémentaire (résolution du lien de téléchargement via def.Download.Before),
-// qui était jusqu'ici effectuée séquentiellement ligne par ligne — coûteux en
-// latence pour une page de résultats avec beaucoup de lignes. Le
-// rate-limiting (RequestDelay / IndexerClient) reste respecté : rate.Limiter
-// et IndexerClient.Do sont conçus pour un usage concurrent, donc paralléliser
-// ici ne contourne pas l'espacement configuré entre requêtes HTTP.
+// maxParallelExtract caps the number of rows processed in parallel by
+// parseResults. Each extraction may trigger an additional HTTP request
+// (download link resolution via def.Download.Before), which was previously
+// performed sequentially row by row — costly in latency for a result page
+// with many rows. Rate limiting (RequestDelay / IndexerClient) is still
+// respected: rate.Limiter and IndexerClient.Do are designed for concurrent
+// use, so parallelizing here does not bypass the configured HTTP request
+// spacing.
 const maxParallelExtract = 8
 
 func (p *Provider) parseResults(ctx context.Context, body string, responseType string, rctx tmpl.Context, keywords string) ([]release.Release, error) {
@@ -76,12 +76,11 @@ func (p *Provider) parseResults(ctx context.Context, body string, responseType s
 		rows = filtered
 	}
 
-	// Extraction des lignes en parallèle (bornée), chaque ligne restant
-	// indépendante (rctx est passé par valeur : chaque goroutine mute sa
-	// propre copie de rctx.Result sans jamais toucher celle des autres, ni
-	// la valeur d'origine du bloc appelant). L'ordre des résultats est
-	// préservé (indexé par position de ligne) pour un comportement
-	// observable identique à une exécution séquentielle.
+	// Parallel (bounded) row extraction, each row remaining independent (rctx
+	// is passed by value: each goroutine mutates its own copy of rctx.Result
+	// without ever touching another's or the caller's original value). Result
+	// order is preserved (indexed by row position) for identical observable
+	// behavior to sequential execution.
 	extracted := make([]release.Release, len(rows))
 	rowErrs := make([]error, len(rows))
 	sem := make(chan struct{}, maxParallelExtract)
@@ -125,9 +124,9 @@ func (p *Provider) parseResults(ctx context.Context, body string, responseType s
 func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx tmpl.Context) (release.Release, error) {
 	values := make(map[string]string, len(p.def.Search.Fields))
 
-	// Extraire les champs en plusieurs passes pour gérer les dépendances
-	// (ex: title_phase2 dépend de title_phase1).
-	// On continue tant qu'on fait du progrès.
+	// Extract fields in multiple passes to handle dependencies
+	// (e.g. title_phase2 depends on title_phase1).
+	// Continue as long as progress is being made.
 	if rctx.Result == nil {
 		rctx.Result = make(map[string]string)
 	}
@@ -135,7 +134,7 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 	for pass := 0; pass < 10; pass++ { // Max 10 passes
 		progress := false
 		for name, field := range p.def.Search.Fields {
-			// Si le champ est déjà extrait, on le saute
+			// Skip if field is already extracted
 			if _, done := values[name]; done {
 				continue
 			}
@@ -154,7 +153,7 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 							progress = true
 							continue
 						}
-						// Champ requis non trouvé, on le garde pour la prochaine passe
+						// Required field not found, keep for next pass
 						continue
 					}
 					target = nodes[0]
@@ -162,7 +161,7 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 			}
 
 			if field.Text != "" {
-				// Rendre le template avec le contexte (Result, Config, etc.)
+				// Render the template with context (Result, Config, etc.)
 				rendered, err := tmpl.Render(field.Text, rctx)
 				if err != nil {
 					if field.Optional {
@@ -171,10 +170,10 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 						progress = true
 						continue
 					}
-					// Template non résolu, on le garde pour la prochaine passe
+					// Unresolved template, keep for next pass
 					continue
 				}
-				// Vérifier si le rendu contient encore des placeholders non résolus
+				// Check if rendered output still contains unresolved placeholders
 				if strings.Contains(rendered, "<no value>") || strings.Contains(rendered, "{{") {
 					continue
 				}
@@ -194,7 +193,7 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 					progress = true
 					continue
 				}
-				// Champ requis manquant, on le garde pour la prochaine passe
+				// Required field missing, keep for next pass
 				continue
 			}
 
@@ -206,7 +205,7 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 					progress = true
 					continue
 				}
-				// Filtre échoué, on le garde pour la prochaine passe
+				// Filter failed, keep for next pass
 				continue
 			}
 			values[name] = filtered
@@ -215,7 +214,7 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 		}
 
 		if !progress {
-			// Aucun progrès, on arrête
+			// No progress, stop
 			break
 		}
 	}
@@ -289,7 +288,7 @@ func fieldsToRelease(values map[string]string) (release.Release, error) {
 	return rel, nil
 }
 
-// extractSelectorField extrait une valeur d'un noeud en utilisant un SelectorField.
+// extractSelectorField extracts a value from a node using a SelectorField.
 func extractSelectorField(node selector.Node, sf *cmodel.SelectorField) (string, error) {
 	if sf == nil {
 		return "", nil
@@ -346,7 +345,7 @@ func extractSelectorField(node selector.Node, sf *cmodel.SelectorField) (string,
 	return filtered, nil
 }
 
-// extractSelectorFromNode extrait une valeur d'un noeud en utilisant un sélecteur et un attribut.
+// extractSelectorFromNode extracts a value from a node using a selector and an attribute.
 func extractSelectorFromNode(node selector.Node, selectorStr, attribute string) (string, error) {
 	sub, isSub := node.(selector.SubSelectable)
 	if !isSub {

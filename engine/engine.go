@@ -1,7 +1,6 @@
-// Package engine implémente le moteur d'exécution des définitions Cardigann :
-// rendu des templates de recherche, appel HTTP, extraction des lignes/champs
-// via les sélecteurs, application des filtres de post-traitement, et
-// construction de releases normalisées.
+// Package engine implements the Cardigann definition execution engine:
+// search template rendering, HTTP calls, row/field extraction via selectors,
+// post-processing filter application, and normalized release construction.
 package engine
 
 import (
@@ -25,12 +24,12 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// HTTPDoer est l'abstraction pour les clients HTTP.
+// HTTPDoer is the abstraction for HTTP clients.
 type HTTPDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
-// Query représente une recherche Cardigann générique.
+// Query represents a generic Cardigann search.
 type Query struct {
 	Keywords    string
 	Categories  []int
@@ -45,17 +44,16 @@ type Query struct {
 	Genre       string
 }
 
-// Provider exécute une IndexerDefinition Cardigann comme fournisseur de recherche.
+// Provider executes a Cardigann IndexerDefinition as a search provider.
 type Provider struct {
 	def     cmodel.IndexerDefinition
 	baseURL string
 	config  map[string]string
 	httpCl  *http.Client
 
-	// client, si renseigné, est utilisé à la place de httpCl : il fournit
-	// cookies persistés (SQLite), rate limiting et retries (Slice C). Le login
-	// (si def.Login.Method != "") est déclenché une seule fois, avant la
-	// première requête de recherche.
+	// client, if set, is used instead of httpCl: it provides persisted cookies
+	// (SQLite), rate limiting, and retries (Slice C). Login (if
+	// def.Login.Method != "") is triggered once, before the first search request.
 	client *httpclient.IndexerClient
 
 	loginOnce  sync.Once
@@ -64,12 +62,12 @@ type Provider struct {
 	limiter    *rate.Limiter
 }
 
-// Def retourne une copie de la définition de l'indexeur.
+// Def returns a copy of the indexer definition.
 func (p *Provider) Def() cmodel.IndexerDefinition { return p.def }
 
-// NewProvider construit un Provider Cardigann prêt à l'emploi, sans gestion
-// de session/login (utile pour les indexeurs publics ou les tests).
-// Si def.RequestDelay > 0, un rate limiter est créé pour espacer les requêtes.
+// NewProvider builds a ready-to-use Cardigann Provider without session/login
+// management (useful for public indexers or tests). If def.RequestDelay > 0,
+// a rate limiter is created to space out requests.
 func NewProvider(def cmodel.IndexerDefinition, baseURL string, config map[string]string) *Provider {
 	p := &Provider{
 		def:     def,
@@ -83,9 +81,9 @@ func NewProvider(def cmodel.IndexerDefinition, baseURL string, config map[string
 	return p
 }
 
-// NewAuthenticatedProvider construit un Provider Cardigann relié à un
-// httpclient.IndexerClient (cookies persistés + rate limit + retries) et
-// effectuant le login défini par def.Login avant la première recherche.
+// NewAuthenticatedProvider builds a Cardigann Provider connected to an
+// httpclient.IndexerClient (persisted cookies + rate limit + retries) that
+// performs the login defined by def.Login before the first search.
 func NewAuthenticatedProvider(def cmodel.IndexerDefinition, baseURL string, config map[string]string, client *httpclient.IndexerClient) *Provider {
 	return &Provider{
 		def:     def,
@@ -105,9 +103,9 @@ func (p *Provider) Protocol() release.Protocol {
 	return release.ProtocolTorrent
 }
 
-// httpClient retourne le client HTTP effectif (IndexerClient prioritaire),
-// après avoir garanti que le login (le cas échéant) a été effectué une fois.
-// Si un rate limiter est configuré (via RequestDelay), la requête est espacée.
+// httpClient returns the effective HTTP client (IndexerClient preferred),
+// after ensuring that login (if applicable) has been performed once.
+// If a rate limiter is configured (via RequestDelay), the request is spaced out.
 func (p *Provider) httpClient(ctx context.Context) (HTTPDoer, error) {
 	if p.client == nil {
 		if p.limiter != nil {
@@ -129,12 +127,11 @@ func (p *Provider) httpClient(ctx context.Context) (HTTPDoer, error) {
 	return p.client, nil
 }
 
-// Search exécute la recherche pour tous les search.paths de la définition.
+// Search executes the search for all search.paths in the definition.
 //
-// Sûr pour des appels concurrents sur la même instance de *Provider :
-// aucun état mutable partagé n'est modifié après la première recherche
-// (les valeurs de configuration par défaut ne sont appliquées qu'une seule
-// fois via configOnce, et les mots-clés filtrés restent locaux à l'appel).
+// Safe for concurrent calls on the same *Provider instance: no shared mutable
+// state is modified after the first search (default config values are applied
+// only once via configOnce, and filtered keywords remain local to the call).
 func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, error) {
 	keywords := q.Keywords
 	for _, step := range p.def.Search.KeywordsFilters {
@@ -149,11 +146,10 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 	mappedCategories := mapCategories(q.Categories, p.def.Caps.CategoryMappings)
 
 	// Populate config with default values from definition if not already set
-	// Note: "false" est truthy dans les templates Go, donc on l'exclut du Config
-	// pour que {{ if .Config.freeleech }} fonctionne correctement.
-	// N'est fait qu'une seule fois (configOnce) : p.config est ensuite traité
-	// comme une valeur en lecture seule, ce qui le rend sûr à partager entre
-	// des recherches concurrentes.
+	// Note: "false" is truthy in Go templates, so we exclude it from Config
+	// so that {{ if .Config.freeleech }} works correctly.
+	// Done only once (configOnce): p.config is then treated as read-only,
+	// making it safe to share between concurrent searches.
 	p.configOnce.Do(func() {
 		if p.config == nil {
 			p.config = make(map[string]string)
@@ -265,19 +261,19 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 		method = http.MethodGet
 	}
 
-	// Utiliser les inputs du path, ou fallback sur les inputs du search
+	// Use path inputs, or fall back to search inputs
 	inputs := path.Inputs
 	if len(inputs) == 0 {
 		inputs = p.def.Search.Inputs
 	}
 
-	// Rendre les inputs et séparer $raw
+	// Render inputs and separate $raw
 	rendered, rawParams, err := renderInputs(inputs, rctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Construire la requête avec filtrage des valeurs vides/"false"
+	// Build request with empty/"false" value filtering
 	values := filterInputs(rendered)
 	appendRawParams(values, rawParams)
 
@@ -305,7 +301,7 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 		}
 	}
 
-	// Appliquer les headers de la définition (ex: Authorization: Bearer {{ .Config.apikey }})
+	// Apply definition headers (e.g. Authorization: Bearer {{ .Config.apikey }})
 	for header, vals := range p.def.Search.Headers {
 		for _, v := range vals {
 			rendered, err := tmpl.Render(v, rctx)
