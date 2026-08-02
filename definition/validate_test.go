@@ -1,0 +1,52 @@
+package definition
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestValidateNeverFails(t *testing.T) {
+	defs := []IndexerDefinition{
+		{ID: "torrent-plain", Type: ""},
+		{ID: "torrent-public", Type: "public"},
+		{ID: "usenet-no-download", Type: "usenet"},
+		{ID: "ddl-no-download", Type: "ddl"},
+		{ID: "streaming-no-download", Type: "streaming"},
+		{ID: "unknown-type", Type: "weird"},
+	}
+	for _, d := range defs {
+		// Validate must never panic and must not fail the definition:
+		// it only collects warnings.
+		_ = d.Validate()
+	}
+}
+
+func TestValidateWarnsOnMissingDownload(t *testing.T) {
+	d := IndexerDefinition{ID: "ddl", Type: "ddl"}
+	warns := d.Validate()
+	if len(warns) == 0 {
+		t.Fatal("expected a warning for a ddl definition without download")
+	}
+	if !strings.Contains(warns[0], "ddl") {
+		t.Errorf("warning should mention the protocol, got %q", warns[0])
+	}
+
+	// With a download field the definition is complete: no warning.
+	d.Search.Fields = map[string]Field{"download": {Selector: "a.dl", Attribute: "href"}}
+	if w := d.Validate(); len(w) != 0 {
+		t.Errorf("expected no warnings with a download field, got %v", w)
+	}
+}
+
+func TestValidateUnknownType(t *testing.T) {
+	d := IndexerDefinition{ID: "x", Type: "weird"}
+	found := false
+	for _, w := range d.Validate() {
+		if strings.Contains(w, "unknown type") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an unknown-type warning, got %v", d.Validate())
+	}
+}

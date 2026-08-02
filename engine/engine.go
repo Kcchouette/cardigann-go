@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -78,6 +79,7 @@ func NewProvider(def cmodel.IndexerDefinition, baseURL string, config map[string
 	if def.RequestDelay > 0 {
 		p.limiter = rate.NewLimiter(rate.Every(time.Duration(def.RequestDelay*float64(time.Second))), 1)
 	}
+	logWarnings(def)
 	return p
 }
 
@@ -85,6 +87,7 @@ func NewProvider(def cmodel.IndexerDefinition, baseURL string, config map[string
 // httpclient.IndexerClient (persisted cookies + rate limit + retries) that
 // performs the login defined by def.Login before the first search.
 func NewAuthenticatedProvider(def cmodel.IndexerDefinition, baseURL string, config map[string]string, client *httpclient.IndexerClient) *Provider {
+	logWarnings(def)
 	return &Provider{
 		def:     def,
 		baseURL: baseURL,
@@ -93,14 +96,31 @@ func NewAuthenticatedProvider(def cmodel.IndexerDefinition, baseURL string, conf
 	}
 }
 
+// logWarnings emits the non-fatal protocol validation warnings of a definition.
+func logWarnings(def cmodel.IndexerDefinition) {
+	for _, w := range def.Validate() {
+		slog.Warn("definition validation", "indexer", def.ID, "warning", w)
+	}
+}
+
 func (p *Provider) ID() string   { return p.def.ID }
 func (p *Provider) Name() string { return p.def.Name }
 
 func (p *Provider) Protocol() release.Protocol {
-	if p.def.IsUsenet() {
+	switch p.def.Type {
+	case "usenet":
 		return release.ProtocolUsenet
+	case "ddl":
+		return release.ProtocolDDL
+	case "streaming":
+		return release.ProtocolStreaming
+	default:
+		// Heuristic fallback for definitions without an explicit protocol type.
+		if p.def.IsUsenet() {
+			return release.ProtocolUsenet
+		}
+		return release.ProtocolTorrent
 	}
-	return release.ProtocolTorrent
 }
 
 // httpClient returns the effective HTTP client (IndexerClient preferred),

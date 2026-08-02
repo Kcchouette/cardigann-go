@@ -16,7 +16,7 @@ type IndexerDefinition struct {
 	Name        string   `yaml:"name"`
 	Description string   `yaml:"description"`
 	Language    string   `yaml:"language"`
-	Type        string   `yaml:"type"` // public | private | semi-private | usenet
+	Type        string   `yaml:"type"` // public | private | semi-private | usenet | ddl | streaming
 	Encoding    string   `yaml:"encoding"`
 	Links       []string `yaml:"links"`
 	LegacyLinks []string `yaml:"legacylinks"`
@@ -76,6 +76,41 @@ func (d IndexerDefinition) IsUsenet() bool {
 	// Purely usenet indexer (all categories in the Newznab range)
 	// or at least one category with an explicit usenet keyword.
 	return allInUsenetRange || hasUsenetKeyword
+}
+
+// Validate returns non-fatal warnings about the definition, checked against
+// its protocol. It never returns an error: the v11 corpus must stay fully
+// usable even for definitions that omit optional fields.
+func (d IndexerDefinition) Validate() []string {
+	var warns []string
+
+	switch d.Type {
+	case "usenet", "ddl", "streaming":
+		// explicit protocols are checked below
+	case "":
+		// empty type is normal for torrent definitions
+	default:
+		warns = append(warns, fmt.Sprintf("unknown type %q, treated as torrent", d.Type))
+	}
+
+	hasDownload := false
+	for name := range d.Search.Fields {
+		if name == "download" || name == "downloadurl" || name == "magnet" || name == "infohash" {
+			hasDownload = true
+			break
+		}
+	}
+	if d.Download != nil {
+		hasDownload = true
+	}
+
+	if !hasDownload {
+		switch d.Type {
+		case "usenet", "ddl", "streaming":
+			warns = append(warns, fmt.Sprintf("%s definition without download field, magnet/infohash field or download block", d.Type))
+		}
+	}
+	return warns
 }
 
 // Caps describes the search/category capabilities of the indexer.
