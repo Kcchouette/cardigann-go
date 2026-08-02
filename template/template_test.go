@@ -161,6 +161,50 @@ func TestRender_TodayYear(t *testing.T) {
 	}
 }
 
+func TestRender_JoinFunc(t *testing.T) {
+	got, err := Render(`{{ join .Categories "," }}`, Context{Categories: []string{"a", "b", "c"}})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if got != "a,b,c" {
+		t.Errorf("expected a,b,c, got %q", got)
+	}
+}
+
+func TestRender_FilterFuncs(t *testing.T) {
+	ctx := Context{Result: map[string]string{
+		"title": "cat",
+		"t":     "xx1",
+		"s":     "a,b,c",
+		"x":     "hey",
+		"u":     "ABC",
+		"q":     "http://e.test/a?f=42",
+	}}
+	tests := []struct {
+		name     string
+		template string
+		expected string
+	}{
+		{"re_replace pipe", `{{ .Result.title | re_replace "a" "b" }}`, "cbt"},
+		{"replace pipe", `{{ .Result.t | replace "x" "y" }}`, "yy1"},
+		{"split pipe", `{{ .Result.s | split "," }}`, "a"},
+		{"append pipe", `{{ .Result.x | append "!" }}`, "hey!"},
+		{"tolower pipe", `{{ .Result.u | tolower }}`, "abc"},
+		{"querystring pipe", `{{ .Result.q | querystring "f" }}`, "42"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Render(tt.template, ctx)
+			if err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			if got != tt.expected {
+				t.Errorf("got %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestRender_QueryFields(t *testing.T) {
 	tests := []struct {
 		name     string

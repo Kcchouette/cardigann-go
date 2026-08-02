@@ -11,6 +11,8 @@ import (
 	"sync"
 	"text/template"
 	"time"
+
+	"github.com/Kcchouette/cardigann-go/template/filters"
 )
 
 // Context is the rendering context exposed to Cardigann templates.
@@ -60,10 +62,60 @@ type cachedTemplate struct {
 var templateCache sync.Map // string -> cachedTemplate
 
 // funcMap is static: FuncMap() depends on no state, so build it once rather
-// than on every Render call.
-var funcMap = template.FuncMap{
-	"ToLower": strings.ToLower,
-	"ToUpper": strings.ToUpper,
+// than on every Render call. It exposes the named helpers (ToLower/ToUpper),
+// `join`, and every registered field filter as a template function (piped
+// value arrives as the last argument; see filterAsFunc). `andmatch` is row
+// level and needs keywords — not exposed.
+var funcMap = buildFuncMap()
+
+func buildFuncMap() template.FuncMap {
+	m := template.FuncMap{
+		"ToLower": strings.ToLower,
+		"ToUpper": strings.ToUpper,
+		"join":    joinFunc,
+	}
+	for name, fn := range filters.Registry {
+		if name == "andmatch" {
+			continue
+		}
+		m[name] = filterAsFunc(name, fn)
+	}
+	return m
+}
+
+// filterAsFunc exposes a field filter (value, args...) as a template
+// function. Go template pipes pass the previous value as the LAST argument,
+// so the wrapper pops the last variadic argument as the value and forwards
+// the rest as the filter's positional args.
+func filterAsFunc(name string, fn filters.FilterFunc) func(args ...string) (string, error) {
+	return func(args ...string) (string, error) {
+		if len(args) == 0 {
+			return "", fmt.Errorf("%s: missing value", name)
+		}
+		value := args[len(args)-1]
+		return fn(value, args[:len(args)-1])
+	}
+}
+
+// joinFunc implements `{{ join .Categories "," }}` (the corpus form) and the
+// pipe form `{{ .Cats | join "," }}`. It collects the []string element and
+// the string separator regardless of argument order.
+func joinFunc(parts ...any) string {
+	var elems []string
+	sep := ""
+	for _, p := range parts {
+		switch v := p.(type) {
+		case []string:
+			elems = v
+		case string:
+			if sep == "" {
+				sep = v
+			} else {
+				elems = append(elems, v)
+			}
+		}
+	}
+	return strings.Join(elems, sep)
 }
 
 // bufPool reuses the output buffers across Render calls. A pooled buffer
