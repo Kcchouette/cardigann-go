@@ -149,8 +149,8 @@ type Login struct {
 	Form           string                   `yaml:"form,omitempty"`
 	Error          []ErrorSelector          `yaml:"error"`
 	Test           *Test                    `yaml:"test,omitempty"`
-	Headers        map[string]string        `yaml:"headers,omitempty"`
-	Cookies        map[string]string        `yaml:"cookies,omitempty"`
+	Headers        map[string][]string    `yaml:"headers,omitempty"`
+	Cookies        []string               `yaml:"cookies,omitempty"`
 	SubmitPath     string                   `yaml:"submitpath,omitempty"`
 	Extra          map[string]any           `yaml:",inline"`
 }

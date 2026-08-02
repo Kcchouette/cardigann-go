@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strings"
 	"sync"
 
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
@@ -27,6 +28,12 @@ func (e *ErrLoginFailed) Error() string { return fmt.Sprintf("login failed: %s",
 // baseURL is the base URL of the indexer (one of def.Links), config contains
 // the user-entered values for the `settings` (credentials, etc.).
 func Login(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
+	// Static definition-level cookies (login.cookies) apply to every method.
+	if len(def.Login.Cookies) > 0 {
+		if err := applyStaticCookies(client, baseURL, def.Login.Cookies); err != nil {
+			return err
+		}
+	}
 	switch def.Login.Method {
 	case "", "none":
 		return nil
@@ -78,5 +85,39 @@ func loginCookie(client *http.Client, baseURL string, config map[string]string) 
 	req := &http.Request{Header: http.Header{"Cookie": {raw}}}
 	cookies := req.Cookies()
 	jar.SetCookies(u, cookies)
+	return nil
+}
+
+// applyStaticCookies injects the definition-level static cookies
+// (login.cookies, format "name=value") into the client's jar for baseURL.
+// Unlike loginCookie (the user-supplied cookie method), these are applied
+// regardless of the login method.
+func applyStaticCookies(client *http.Client, baseURL string, cookies []string) error {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return fmt.Errorf("invalid base url %q: %w", baseURL, err)
+	}
+
+	jarInitMu.Lock()
+	jar := client.Jar
+	if jar == nil {
+		jar, err = cookiejar.New(nil)
+		if err != nil {
+			jarInitMu.Unlock()
+			return fmt.Errorf("creating cookie jar: %w", err)
+		}
+		client.Jar = jar
+	}
+	jarInitMu.Unlock()
+
+	var toSet []*http.Cookie
+	for _, entry := range cookies {
+		name, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		toSet = append(toSet, &http.Cookie{Name: name, Value: value})
+	}
+	jar.SetCookies(u, toSet)
 	return nil
 }

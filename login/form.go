@@ -34,13 +34,6 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 	}
 	loginURL := httputil.ResolveURL(baseURL, loginPath)
 
-	if len(def.Login.Cookies) > 0 && client.Jar != nil {
-		u, _ := url.Parse(baseURL)
-		for name, value := range def.Login.Cookies {
-			client.Jar.SetCookies(u, []*http.Cookie{{Name: name, Value: value}})
-		}
-	}
-
 	// Extract dynamic values from the login page (CSRF tokens, etc.)
 	extracted, err := extractSelectorInputs(ctx, client, def, baseURL, rctx, def.Login.Form)
 	if err != nil {
@@ -71,8 +64,10 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 		return fmt.Errorf("building login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	for k, v := range def.Login.Headers {
-		req.Header.Set(k, v)
+	for k, vs := range def.Login.Headers {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
 	}
 
 	resp, err := client.Do(req)

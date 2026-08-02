@@ -41,8 +41,10 @@ func loginGet(ctx context.Context, client *http.Client, def cmodel.IndexerDefini
 	if err != nil {
 		return fmt.Errorf("building login request: %w", err)
 	}
-	for k, v := range def.Login.Headers {
-		req.Header.Set(k, v)
+	for k, vs := range def.Login.Headers {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
 	}
 
 	resp, err := client.Do(req)
@@ -81,6 +83,11 @@ func loginOneURL(ctx context.Context, client *http.Client, def cmodel.IndexerDef
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, loginURL, nil)
 	if err != nil {
 		return fmt.Errorf("building login request: %w", err)
+	}
+	for k, vs := range def.Login.Headers {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
 	}
 
 	resp, err := client.Do(req)

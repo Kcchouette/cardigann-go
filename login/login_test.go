@@ -558,8 +558,8 @@ func TestLogin_FormWithHeaders(t *testing.T) {
 				"username": "{{ .Config.username }}",
 				"password": "{{ .Config.password }}",
 			},
-			Headers: map[string]string{
-				"X-Custom": "test-value",
+			Headers: map[string][]string{
+				"X-Custom": {"test-value"},
 			},
 			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
 		},
@@ -602,9 +602,7 @@ func TestLogin_FormWithCookies(t *testing.T) {
 				"username": "{{ .Config.username }}",
 				"password": "{{ .Config.password }}",
 			},
-			Cookies: map[string]string{
-				"mycookie": "myvalue",
-			},
+			Cookies: []string{"mycookie=myvalue"},
 			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
 		},
 	}
@@ -618,6 +616,44 @@ func TestLogin_FormWithCookies(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("expected successful login with cookies, got error: %v", err)
+	}
+}
+
+// TestLogin_GetWithStaticCookies proves that definition-level static cookies
+// (login.cookies) are injected for methods other than form (here: get).
+func TestLogin_GetWithStaticCookies(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/login" && r.Method == http.MethodGet {
+			cookie, err := r.Cookie("javacookie")
+			if err != nil || cookie.Value != "JAVA" {
+				t.Errorf("expected cookie javacookie=JAVA, got err=%v value=%q", err, cookie)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
+			_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
+			return
+		}
+		_, _ = w.Write([]byte(`<html><body><div class="error">unexpected</div></body></html>`))
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method:  "get",
+			Path:   "/login",
+			Cookies: []string{"javacookie=JAVA"},
+			Inputs:  map[string]string{},
+			Error:   []cmodel.ErrorSelector{{Selector: "div.error"}},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, nil)
+	if err != nil {
+		t.Fatalf("expected successful login with static cookies, got error: %v", err)
 	}
 }
 
