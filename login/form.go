@@ -156,9 +156,11 @@ func doLoginRequest(ctx context.Context, client *http.Client, def cmodel.Indexer
 	return nil
 }
 
-// resolveSelectorInputs resolves the login inputs keys as CSS selectors
-// against the login page (login.selectors: true): each selector's first
-// match contributes its name/value attributes to the POST body.
+// resolveSelectorInputs resolves the login inputs (login.selectors: true):
+// each inputs key is a CSS selector against the login page; the first match's
+// `name` attribute becomes the POST field name (falling back to the selector
+// string when the page is not HTML), and the field value is the RENDERED
+// input template (Prowlarr semantics: only the name comes from the page).
 func resolveSelectorInputs(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, rctx tmpl.Context) (map[string]string, error) {
 	values := make(map[string]string)
 
@@ -183,24 +185,23 @@ func resolveSelectorInputs(ctx context.Context, client *http.Client, def cmodel.
 		return nil, err
 	}
 
-	doc, err := selector.NewHTMLDocument(string(body))
-	if err != nil {
-		return nil, fmt.Errorf("login.selectors requires an HTML login page")
-	}
-	for selStr := range def.Login.Inputs {
-		nodes, err := doc.Find(selStr)
-		if err != nil || len(nodes) == 0 {
-			continue
+	// A non-HTML login path (e.g. a method:post endpoint) cannot provide
+	// element names; fall back to the selector string as the field name.
+	doc, _ := selector.NewHTMLDocument(string(body))
+	for selStr, valueTmpl := range def.Login.Inputs {
+		name := selStr
+		if doc != nil {
+			if nodes, err := doc.Find(selStr); err == nil && len(nodes) > 0 {
+				if n, ok := nodes[0].Attr("name"); ok && n != "" {
+					name = n
+				}
+			}
 		}
-		name, _ := nodes[0].Attr("name")
-		if name == "" {
-			name = selStr
+		rendered, err := tmpl.Render(valueTmpl, rctx)
+		if err != nil {
+			return nil, fmt.Errorf("rendering login input %q: %w", selStr, err)
 		}
-		value, _ := nodes[0].Attr("value")
-		if value == "" {
-			value = nodes[0].Text()
-		}
-		values[name] = value
+		values[name] = rendered
 	}
 	return values, nil
 }

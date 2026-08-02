@@ -974,16 +974,19 @@ func TestLogin_FormWithSubmitPathOverride(t *testing.T) {
 }
 
 // TestLogin_SelectorsTrue covers login.selectors: the inputs keys are CSS
-// selectors resolved against the login page (name/value attributes).
+// selectors against the login page; the matched element's `name` attribute
+// becomes the POST field name and the value is the RENDERED input template
+// (Prowlarr semantics — the page's value attribute is not used).
 func TestLogin_SelectorsTrue(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/login" && r.Method == http.MethodGet:
-			_, _ = w.Write([]byte(`<html><body><form id="login"><input name="uid" value="user123"><input name="token" value="tok456"></form></body></html>`))
+			// The page's value attributes must NOT leak into the POST.
+			_, _ = w.Write([]byte(`<html><body><form id="login"><input name="uid" value="page-value"><input name="token" value="page-token"></form></body></html>`))
 		case r.URL.Path == "/login" && r.Method == http.MethodPost:
 			_ = r.ParseForm()
 			if r.FormValue("uid") != "user123" || r.FormValue("token") != "tok456" {
-				t.Errorf("expected uid=user123 token=tok456, got uid=%q token=%q", r.FormValue("uid"), r.FormValue("token"))
+				t.Errorf("expected uid=user123 token=tok456 (rendered templates), got uid=%q token=%q", r.FormValue("uid"), r.FormValue("token"))
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
@@ -1001,8 +1004,8 @@ func TestLogin_SelectorsTrue(t *testing.T) {
 			Path:      "/login",
 			Selectors: true,
 			Inputs: map[string]string{
-				"input[name=uid]":   "",
-				"input[name=token]": "",
+				"input[name=uid]":   "{{ .Config.uid }}",
+				"input[name=token]": "tok456",
 			},
 			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
 		},
@@ -1011,9 +1014,55 @@ func TestLogin_SelectorsTrue(t *testing.T) {
 	client := &http.Client{}
 	client.Jar, _ = newJarForTest()
 
-	err := Login(context.Background(), client, def, server.URL, nil)
+	err := Login(context.Background(), client, def, server.URL, map[string]string{"uid": "user123"})
 	if err != nil {
 		t.Fatalf("expected successful selector login, got error: %v", err)
+	}
+}
+
+// TestLogin_SelectorsTrue_NonHTMLPath covers method:post + selectors where
+// the login path is a POST endpoint: the selector string becomes the field
+// name and the value is still the rendered template.
+func TestLogin_SelectorsTrue_NonHTMLPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/takelogin" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("not html"))
+			return
+		}
+		if r.URL.Path == "/takelogin" && r.Method == http.MethodPost {
+			_ = r.ParseForm()
+			if r.FormValue("input[id=username]") != "alice" {
+				t.Errorf("expected selector-name field input[id=username]=alice, got %q", r.FormValue("input[id=username]"))
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
+			_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
+			return
+		}
+		_, _ = w.Write([]byte(`<html><body><div class="error">unexpected</div></body></html>`))
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method:    "post",
+			Path:      "/takelogin",
+			Selectors: true,
+			Inputs: map[string]string{
+				"input[id=username]": "{{ .Config.username }}",
+			},
+			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{"username": "alice"})
+	if err != nil {
+		t.Fatalf("expected successful selector login on non-HTML path, got error: %v", err)
 	}
 }
 
