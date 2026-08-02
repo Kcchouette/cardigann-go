@@ -52,7 +52,8 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 	values := url.Values{}
 	if def.Login.Selectors {
 		// login.selectors: the inputs keys are CSS selectors against the
-		// login page; their first match contributes name/value attributes.
+		// login page; their first match's name attribute is the field name
+		// and the value is the rendered input template.
 		resolved, err := resolveSelectorInputs(ctx, client, def, baseURL, rctx)
 		if err != nil {
 			return fmt.Errorf("resolving selector inputs: %w", err)
