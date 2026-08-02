@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"text/template"
+	"time"
 )
 
 // Context is the rendering context exposed to Cardigann templates.
@@ -21,6 +22,20 @@ type Context struct {
 	Result      map[string]string // values already extracted for the current result row
 	DownloadUri *url.URL          // resolved download URL (usable in templates)
 }
+
+// True renders the constant "true" (corpus idiom: `{{ .True }}`).
+func (Context) True() string { return "true" }
+
+// False renders the empty string, not "false": the engine populates every
+// Query key with "" when the parameter is absent and excludes "false" config
+// defaults, so the corpus idioms `eq .Query.IMDBID .False` and
+// `if .Result._internal` (which receives a rendered .False) require the empty
+// string to be falsy.
+func (Context) False() string { return "" }
+
+// Today returns the current time, usable as `{{ .Today.Year }}` (corpus idiom
+// in empty-keywords/browse branches).
+func (Context) Today() time.Time { return time.Now() }
 
 // cachedTemplate is the cache value: the compiled template and its parse
 // error (nil when parsing succeeded). Errors are cached too so that an

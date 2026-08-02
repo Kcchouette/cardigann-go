@@ -2,8 +2,10 @@ package template
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestRender_Keywords(t *testing.T) {
@@ -115,6 +117,47 @@ func BenchmarkRender_CachedTemplate(b *testing.B) {
 		if _, err := Render(tmplStr, ctx); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestRender_TrueFalse(t *testing.T) {
+	// .False must be falsy (empty string): the corpus idiom
+	// `eq .Query.IMDBID .False` compares against the empty value the engine
+	// uses for absent query parameters.
+	got, err := Render(`{{ if eq .Query.IMDBID .False }}noid{{ else }}hastmdb{{ end }}`, Context{Query: map[string]string{"TMDBID": "123"}})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if got != "noid" {
+		t.Errorf("expected noid, got %q", got)
+	}
+
+	got, err = Render(`{{ .True }}`, Context{})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if got != "true" {
+		t.Errorf("expected true, got %q", got)
+	}
+
+	// .False must render nothing at all (not the string "false").
+	got, err = Render(`{{ .False }}`, Context{})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+func TestRender_TodayYear(t *testing.T) {
+	got, err := Render(`{{ .Today.Year }}`, Context{})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	want := strconv.Itoa(time.Now().Year())
+	if got != want {
+		t.Errorf("expected year %s, got %q", want, got)
 	}
 }
 
