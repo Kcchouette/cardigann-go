@@ -469,3 +469,31 @@ search:
 		t.Errorf("expected paths to win, got %+v", def2.Search.Paths)
 	}
 }
+
+func TestRowsAttributeParse(t *testing.T) {
+	yaml := `
+id: rowsattr
+name: RowsAttr
+type: public
+caps:
+  modes:
+    search: [q]
+search:
+  path: /api
+  response:
+    type: json
+  rows:
+    selector: data
+    attribute: attributes
+  fields:
+    title:
+      selector: title
+`
+	def, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if def.Search.Rows.Attribute != "attributes" {
+		t.Errorf("rows.attribute = %q, want attributes (parse-only)", def.Search.Rows.Attribute)
+	}
+}

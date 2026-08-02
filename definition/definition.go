@@ -246,11 +246,14 @@ type ResponseInfo struct {
 }
 
 // Rows describes how to select result rows in the response document.
+// Attribute is parsed for schema compatibility; its runtime semantics
+// (element -> value rows) are not implemented yet (known limitation).
 type Rows struct {
-	Selector string         `yaml:"selector"`
-	After    int            `yaml:"after"`
-	Filters  []FilterStep   `yaml:"filters"`
-	Count    *SelectorField `yaml:"count,omitempty"` // row limit selector (e.g. JSON $.numFound)
+	Selector  string         `yaml:"selector"`
+	After     int            `yaml:"after"`
+	Filters   []FilterStep   `yaml:"filters"`
+	Count     *SelectorField `yaml:"count,omitempty"` // row limit selector (e.g. JSON $.numFound)
+	Attribute string         `yaml:"attribute,omitempty"`
 }
 
 // Field describes how to extract and transform a value for a result row.
