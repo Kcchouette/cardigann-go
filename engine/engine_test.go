@@ -1528,3 +1528,237 @@ search:
 		t.Errorf("second release = %+v, want Second/200", releases[1])
 	}
 }
+
+// TestSearch_FieldCase_HTML covers field-level `case` on HTML rows: keys are
+// CSS selectors matched against the row, "*" is only an explicit fallback
+// (it must NOT shadow a specific matching key even though it sorts first).
+func TestSearch_FieldCase_HTML(t *testing.T) {
+	yamlDef := `
+id: casehtml
+name: CaseHTML
+description: field case HTML test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    downloadvolumefactor:
+      case:
+        img[src$="free.gif"]: 0
+        "*": 1
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	htmlBody := `<table class="results"><tr>
+	  <td><img src="/free.gif"><a class="title">Free Item</a></td>
+	</tr><tr>
+	  <td><a class="title">Normal Item</a></td>
+	</tr></table>`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(htmlBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 2 {
+		t.Fatalf("expected 2 releases, got %d", len(releases))
+	}
+	if releases[0].Title != "Free Item" || releases[1].Title != "Normal Item" {
+		t.Errorf("unexpected titles: %q, %q", releases[0].Title, releases[1].Title)
+	}
+}
+
+// TestSearch_FieldCase_JSON covers field-level `case` on JSON rows: keys are
+// literal value strings, values may be templates (.True/.False).
+func TestSearch_FieldCase_JSON(t *testing.T) {
+	yamlDef := `
+id: casejson
+name: CaseJSON
+description: field case JSON test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /api/search
+      response:
+        type: json
+  rows:
+    selector: items
+  fields:
+    _internal:
+      selector: internal
+      case:
+        False: "{{ .False }}"
+        True: "{{ .True }}"
+    title:
+      text: "{{ if .Result._internal }}Internal: {{ .Result._internal }}{{ else }}Public{{ end }}"
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	jsonBody := `{"items":[
+	  {"internal":"False","title":"A"},
+	  {"internal":"True","title":"B"}
+	]}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(jsonBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 2 {
+		t.Fatalf("expected 2 releases, got %d", len(releases))
+	}
+	if releases[0].Title != "Public" {
+		t.Errorf("False case: expected Public (falsy .Result._internal), got %q", releases[0].Title)
+	}
+	if releases[1].Title != "Internal: true" {
+		t.Errorf("True case: expected 'Internal: true', got %q", releases[1].Title)
+	}
+}
+
+// TestSearch_FieldRemove covers the field-level `remove` feature: matching
+// descendant subtrees are stripped from the text without mutating the shared
+// document (verified under -race).
+func TestSearch_FieldRemove(t *testing.T) {
+	yamlDef := `
+id: remover
+name: Remover
+description: field remove test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: td.t
+      remove: "span.remove-me, a"
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	htmlBody := `<table class="results"><tr>
+	  <td class="t">Keep <span class="remove-me">DROP</span> this <a href="/x">link</a> text</td>
+	  <td><a class="dl" href="/dl/1"></a></td>
+	</tr></table>`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(htmlBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+	if strings.Contains(releases[0].Title, "DROP") || strings.Contains(releases[0].Title, "link") {
+		t.Errorf("title still contains removed content: %q", releases[0].Title)
+	}
+	if !strings.Contains(releases[0].Title, "Keep") || !strings.Contains(releases[0].Title, "text") {
+		t.Errorf("title lost kept content: %q", releases[0].Title)
+	}
+}
+
+// TestSearch_FieldDefault covers the field-level `default` feature (v11
+// requires optional: true): the rendered default fills an empty extraction.
+func TestSearch_FieldDefault(t *testing.T) {
+	yamlDef := `
+id: defaulted
+name: Defaulted
+description: field default test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+settings:
+  - name: fallback_size
+    type: text
+    label: Fallback size
+    default: "4242"
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    size:
+      selector: a.size
+      optional: true
+      default: "{{ .Config.fallback_size }}"
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	htmlBody := `<table class="results"><tr>
+	  <td><a class="title">Item</a><a class="dl" href="/dl/1"></a></td>
+	</tr></table>`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(htmlBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+	if releases[0].Size != 4242 {
+		t.Errorf("size = %d, want 4242 (rendered config default)", releases[0].Size)
+	}
+}

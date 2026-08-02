@@ -7,6 +7,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/andybalholm/cascadia"
+	"golang.org/x/net/html"
 )
 
 // matcherCache caches compiled cascadia matchers, indexed by the raw selector
@@ -67,6 +68,52 @@ type htmlNode struct {
 
 func (n *htmlNode) Text() string {
 	return strings.TrimSpace(n.sel.Text())
+}
+
+// TextExcluding returns the node's trimmed text, skipping any descendant
+// subtree matched by one of the given selectors. Read-only: the underlying
+// document is never mutated, so it is safe under the parallel row extraction
+// that shares a single document.
+func (n *htmlNode) TextExcluding(selectors []string) string {
+	matchers := make([]cascadia.Selector, 0, len(selectors))
+	for _, s := range selectors {
+		if s == "" {
+			continue
+		}
+		if m, err := compileMatcher(s); err == nil {
+			matchers = append(matchers, m)
+		}
+	}
+	if len(matchers) == 0 || len(n.sel.Nodes) == 0 {
+		return n.Text()
+	}
+
+	var b strings.Builder
+	var walk func(node *html.Node)
+	walk = func(node *html.Node) {
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			switch child.Type {
+			case html.ElementNode:
+				excluded := false
+				for _, m := range matchers {
+					if m.Match(child) {
+						excluded = true
+						break
+					}
+				}
+				if excluded {
+					continue
+				}
+				walk(child)
+			case html.TextNode:
+				b.WriteString(child.Data)
+			}
+		}
+	}
+	for _, root := range n.sel.Nodes {
+		walk(root)
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func (n *htmlNode) Attr(name string) (string, bool) {

@@ -62,6 +62,9 @@ type jsonNode struct {
 	result gjson.Result
 }
 
+// jsonNodeMarker marks jsonNode as a JSONNode (see selector.JSONNode).
+func (n *jsonNode) jsonNodeMarker() {}
+
 func (n *jsonNode) Text() string {
 	return n.result.String()
 }

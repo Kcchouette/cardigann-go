@@ -149,9 +149,11 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 					nodes, err := sub.Find(field.Selector)
 					if err != nil || len(nodes) == 0 {
 						if field.Optional {
-							values[name] = ""
-							rctx.Result[name] = ""
-							progress = true
+							if v, okD := fieldDefault(field, rctx); okD {
+								values[name] = v
+								rctx.Result[name] = v
+								progress = true
+							}
 							continue
 						}
 						// Required field not found, keep for next pass
@@ -166,9 +168,11 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 				rendered, err := tmpl.Render(field.Text, rctx)
 				if err != nil {
 					if field.Optional {
-						values[name] = ""
-						rctx.Result[name] = ""
-						progress = true
+						if v, okD := fieldDefault(field, rctx); okD {
+							values[name] = v
+							rctx.Result[name] = v
+							progress = true
+						}
 						continue
 					}
 					// Unresolved template, keep for next pass
@@ -183,15 +187,31 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 			} else if field.Attribute != "" {
 				raw, ok = target.Attr(field.Attribute)
 			} else {
-				raw = target.Text()
+				if field.Remove != "" {
+					if ex, ok2 := target.(selector.TextExcluder); ok2 {
+						raw = ex.TextExcluding(splitRemoveSelectors(field.Remove))
+					} else {
+						raw = target.Text()
+					}
+				} else {
+					raw = target.Text()
+				}
 				ok = raw != ""
+			}
+
+			// Map the raw value through the field's case table before the
+			// optional/required gate so an unmatched case can defer.
+			if field.Case.Len() > 0 {
+				raw, ok = applyCase(raw, row, rctx, field.Case)
 			}
 
 			if !ok {
 				if field.Optional {
-					values[name] = ""
-					rctx.Result[name] = ""
-					progress = true
+					if v, okD := fieldDefault(field, rctx); okD {
+						values[name] = v
+						rctx.Result[name] = v
+						progress = true
+					}
 					continue
 				}
 				// Required field missing, keep for next pass
@@ -201,13 +221,24 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 			filtered, err := filters.Apply(raw, toFilterSteps(field.Filters))
 			if err != nil {
 				if field.Optional {
-					values[name] = ""
-					rctx.Result[name] = ""
-					progress = true
+					if v, okD := fieldDefault(field, rctx); okD {
+						values[name] = v
+						rctx.Result[name] = v
+						progress = true
+					}
 					continue
 				}
 				// Filter failed, keep for next pass
 				continue
+			}
+			if filtered == "" && field.Default != "" {
+				// Render the default as a template; unresolved defaults defer
+				// to a later pass.
+				if v, okD := fieldDefault(field, rctx); okD {
+					filtered = v
+				} else {
+					continue
+				}
 			}
 			values[name] = filtered
 			rctx.Result[name] = filtered
@@ -286,6 +317,80 @@ func toFilterSteps(steps []cmodel.FilterStep) []filters.Step {
 		out[i] = filters.Step{Name: s.Name, Args: s.Args}
 	}
 	return out
+}
+
+// splitRemoveSelectors splits a comma-separated `remove` value into trimmed
+// non-empty selectors.
+func splitRemoveSelectors(remove string) []string {
+	parts := strings.Split(remove, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// applyCase maps the raw value through the field's case table. For HTML/XML
+// rows the keys are CSS selectors matched against the row; for JSON rows the
+// keys are literal value strings compared to raw. "*" is an explicit
+// fallback applied only when no specific key matched. Case values are
+// rendered as templates. The second return value is false when nothing
+// matched and there is no "*" entry (deferring the field).
+func applyCase(raw string, row selector.Node, rctx tmpl.Context, caseMap cmodel.StringMap) (string, bool) {
+	if _, isJSON := row.(selector.JSONNode); isJSON {
+		for _, key := range caseMap.Keys() {
+			if key == "*" {
+				continue
+			}
+			if raw == key {
+				return renderCaseValue(caseMap.Value(key), rctx)
+			}
+		}
+	} else {
+		if sub, ok := row.(selector.SubSelectable); ok {
+			for _, key := range caseMap.Keys() {
+				if key == "*" {
+					continue
+				}
+				if nodes, err := sub.Find(key); err == nil && len(nodes) > 0 {
+					return renderCaseValue(caseMap.Value(key), rctx)
+				}
+			}
+		}
+	}
+	if fallback, ok := caseMap.Lookup("*"); ok {
+		return renderCaseValue(fallback, rctx)
+	}
+	return "", false
+}
+
+// fieldDefault renders the field's default value (a template) when set.
+// Returns ok=false when the default is still unresolved (defer to a later
+// pass); with no default it returns the empty string with ok=true.
+func fieldDefault(field cmodel.Field, rctx tmpl.Context) (string, bool) {
+	if field.Default == "" {
+		return "", true
+	}
+	rendered, err := tmpl.Render(field.Default, rctx)
+	if err != nil || strings.Contains(rendered, "<no value>") || strings.Contains(rendered, "{{") {
+		return "", false
+	}
+	return rendered, true
+}
+
+// renderCaseValue renders a case value as a template when it contains one.
+// Returns ok=false when the rendered result is still unresolved.
+func renderCaseValue(value string, rctx tmpl.Context) (string, bool) {
+	if !strings.Contains(value, "{{") {
+		return value, true
+	}
+	rendered, err := tmpl.Render(value, rctx)
+	if err != nil || strings.Contains(rendered, "<no value>") || strings.Contains(rendered, "{{") {
+		return "", false
+	}
+	return rendered, true
 }
 
 func fieldsToRelease(values map[string]string) (release.Release, error) {

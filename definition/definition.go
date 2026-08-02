@@ -8,6 +8,8 @@ package definition
 import (
 	"fmt"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // IndexerDefinition represents a complete Cardigann definition (v11).
@@ -211,7 +213,66 @@ type Field struct {
 	Text      string       `yaml:"text"` // literal/template value instead of a selector
 	Optional  bool         `yaml:"optional"`
 	Filters   []FilterStep `yaml:"filters"`
+	Case      StringMap    `yaml:"case,omitempty"`  // value mapping (CSS selectors for HTML rows, literal keys for JSON)
+	Remove    string       `yaml:"remove,omitempty"` // comma-separated selectors stripped from the text
+	Default   string       `yaml:"default,omitempty"` // fallback when extraction yields nothing
 }
+
+// StringMap is a string-keyed map that preserves document (insertion) order
+// and coerces numeric keys/values to strings. yaml.v3 refuses int->string
+// coercion, but the v11 schema allows numeric keys and values (e.g.
+// `case: {0: 0, "*": 1}`), so a node-based unmarshal is required.
+type StringMap struct {
+	entries []stringMapEntry
+	m       map[string]string
+}
+
+type stringMapEntry struct {
+	key   string
+	value string
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler.
+func (sm *StringMap) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("expected a mapping, got kind %d", node.Kind)
+	}
+	*sm = StringMap{m: make(map[string]string, len(node.Content)/2)}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		k, v := node.Content[i], node.Content[i+1]
+		if k.Kind != yaml.ScalarNode {
+			continue
+		}
+		value := ""
+		if v.Kind == yaml.ScalarNode {
+			value = v.Value
+		}
+		sm.entries = append(sm.entries, stringMapEntry{key: k.Value, value: value})
+		sm.m[k.Value] = value
+	}
+	return nil
+}
+
+// Keys returns the map keys in document (insertion) order.
+func (sm StringMap) Keys() []string {
+	keys := make([]string, len(sm.entries))
+	for i, e := range sm.entries {
+		keys[i] = e.key
+	}
+	return keys
+}
+
+// Value returns the value for key, or "" when absent.
+func (sm StringMap) Value(key string) string { return sm.m[key] }
+
+// Lookup returns the value and whether the key is present.
+func (sm StringMap) Lookup(key string) (string, bool) {
+	v, ok := sm.m[key]
+	return v, ok
+}
+
+// Len returns the number of entries.
+func (sm StringMap) Len() int { return len(sm.entries) }
 
 // FilterStep represents a step in the post-extraction filter pipeline
 // (e.g. `re_replace`, `split`, `dateparse`...), with its positional arguments.
