@@ -416,3 +416,56 @@ search:
 		t.Errorf("document order not preserved: %v", keys)
 	}
 }
+
+func TestSearchPathSingular(t *testing.T) {
+	yaml := `
+id: singular
+name: Singular
+type: public
+caps:
+  modes:
+    search: [q]
+search:
+  path: /browse.php
+  rows:
+    selector: x
+  fields:
+    title:
+      selector: y
+`
+	def, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(def.Search.Paths) != 1 {
+		t.Fatalf("expected 1 path, got %d", len(def.Search.Paths))
+	}
+	if def.Search.Paths[0].Path != "/browse.php" {
+		t.Errorf("path = %q, want /browse.php", def.Search.Paths[0].Path)
+	}
+	// The plural form must still work and take precedence when both are set.
+	yaml2 := `
+id: plural
+name: Plural
+type: public
+caps:
+  modes:
+    search: [q]
+search:
+  path: /singular.php
+  paths:
+    - path: /plural.php
+  rows:
+    selector: x
+  fields:
+    title:
+      selector: y
+`
+	def2, err := Parse([]byte(yaml2))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(def2.Search.Paths) != 1 || def2.Search.Paths[0].Path != "/plural.php" {
+		t.Errorf("expected paths to win, got %+v", def2.Search.Paths)
+	}
+}

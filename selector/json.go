@@ -2,6 +2,7 @@ package selector
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/tidwall/gjson"
 )
@@ -42,6 +43,10 @@ func (d *jsonDocument) Find(path string) ([]Node, error) {
 		// If not an array, return the root element
 		return []Node{&jsonNode{result: result}}, nil
 	}
+
+	// Normalize the JSONPath-style "$.foo.bar" prefix used by some corpus
+	// selectors (e.g. rows.count) — gjson paths are unprefixed.
+	path = strings.TrimPrefix(path, "$.")
 
 	result := d.parsed.Get(path)
 	if !result.Exists() {

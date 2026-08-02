@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -1893,5 +1894,119 @@ search:
 	want := "test-suffix"
 	if gotQuery != want {
 		t.Errorf("keywordsfilters arg rendered q = %q, want %q", gotQuery, want)
+	}
+}
+
+// TestSearch_AllowEmptyInputs covers search.allowEmptyInputs: empty and
+// "false" values are dropped by default, kept when the flag is set.
+func TestSearch_AllowEmptyInputs(t *testing.T) {
+	yamlDef := `
+id: emptyinputs
+name: EmptyInputs
+description: allowEmptyInputs test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  allowEmptyInputs: true
+  paths:
+    - path: /search
+      inputs:
+        foo: ""
+        bar: "false"
+        q: "{{ .Keywords }}"
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	var query url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.Query()
+		_, _ = w.Write([]byte(`<table class="results"><tr><td><a class="title">Item</a><a class="dl" href="/dl/1"></a></td></tr></table>`))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	if _, err := provider.Search(context.Background(), Query{Keywords: "test"}); err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if !query.Has("foo") || query.Get("foo") != "" {
+		t.Errorf("allowEmptyInputs: expected foo= to be sent, got %v", query.Get("foo"))
+	}
+	if !query.Has("bar") || query.Get("bar") != "false" {
+		t.Errorf("allowEmptyInputs: expected bar=false to be sent, got %v", query.Get("bar"))
+	}
+	if query.Get("q") != "test" {
+		t.Errorf("q = %q, want test", query.Get("q"))
+	}
+}
+
+// TestSearch_RowsCount covers rows.count: the selector (JSON $.numFound) caps
+// the number of extracted rows.
+func TestSearch_RowsCount(t *testing.T) {
+	yamlDef := `
+id: rowcount
+name: RowCount
+description: rows.count test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /api/search
+      response:
+        type: json
+  rows:
+    selector: items
+    count:
+      selector: $.numFound
+  fields:
+    title:
+      selector: title
+    download:
+      selector: link
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	jsonBody := `{"numFound": 2, "items":[
+	  {"title":"A","link":"/dl/1"},
+	  {"title":"B","link":"/dl/2"},
+	  {"title":"C","link":"/dl/3"},
+	  {"title":"D","link":"/dl/4"}
+	]}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(jsonBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 2 {
+		t.Fatalf("expected 2 releases (numFound cap), got %d", len(releases))
+	}
+	if releases[0].Title != "A" || releases[1].Title != "B" {
+		t.Errorf("unexpected titles: %q, %q", releases[0].Title, releases[1].Title)
 	}
 }

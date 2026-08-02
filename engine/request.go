@@ -44,10 +44,16 @@ func appendRawParams(values url.Values, raw string) {
 	}
 }
 
-// filterInputs removes empty and "false" values (truthy in Go templates).
-func filterInputs(rendered map[string]string) url.Values {
+// filterInputs removes empty and "false" values (truthy in Go templates),
+// unless allowEmpty is set: the v11 allowEmptyInputs flag overrides the
+// empty-value filter entirely (Prowlarr semantics).
+func filterInputs(rendered map[string]string, allowEmpty bool) url.Values {
 	values := url.Values{}
 	for k, v := range rendered {
+		if allowEmpty {
+			values.Set(k, v)
+			continue
+		}
 		// Skip empty or "false" parameters (avoids 400 errors on some APIs)
 		// Note: "false" is truthy in Go templates, but APIs do not expect the parameter
 		if v != "" && v != "false" {

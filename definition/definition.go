@@ -179,13 +179,46 @@ type Test struct {
 
 // Search describes how to perform a search and parse the results.
 type Search struct {
-	Paths           []SearchPath        `yaml:"paths"`
-	Rows            Rows                `yaml:"rows"`
-	Fields          map[string]Field    `yaml:"fields"`
-	KeywordsFilters []FilterStep        `yaml:"keywordsfilters"`
-	Error           []ErrorSelector     `yaml:"error"`
-	Headers         map[string][]string `yaml:"headers,omitempty"`
-	Inputs          map[string]string   `yaml:"inputs,omitempty"`
+	Paths            []SearchPath        `yaml:"paths"`
+	Rows             Rows                `yaml:"rows"`
+	Fields           map[string]Field    `yaml:"fields"`
+	KeywordsFilters  []FilterStep        `yaml:"keywordsfilters"`
+	Error            []ErrorSelector     `yaml:"error"`
+	Headers          map[string][]string `yaml:"headers,omitempty"`
+	Inputs           map[string]string   `yaml:"inputs,omitempty"`
+	AllowEmptyInputs bool                `yaml:"allowEmptyInputs,omitempty"`
+}
+
+// UnmarshalYAML folds the singular `search.path` form (v11 schema oneOf
+// paths|path) into Paths; all other fields are mirrored verbatim.
+func (s *Search) UnmarshalYAML(unmarshal func(any) error) error {
+	type rawSearch struct {
+		Path             string              `yaml:"path"`
+		Paths            []SearchPath        `yaml:"paths"`
+		Rows             Rows                `yaml:"rows"`
+		Fields           map[string]Field    `yaml:"fields"`
+		KeywordsFilters  []FilterStep        `yaml:"keywordsfilters"`
+		Error            []ErrorSelector     `yaml:"error"`
+		Headers          map[string][]string `yaml:"headers,omitempty"`
+		Inputs           map[string]string   `yaml:"inputs,omitempty"`
+		AllowEmptyInputs bool                `yaml:"allowEmptyInputs,omitempty"`
+	}
+	var raw rawSearch
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+	s.Paths = raw.Paths
+	if raw.Path != "" && len(s.Paths) == 0 {
+		s.Paths = []SearchPath{{Path: raw.Path}}
+	}
+	s.Rows = raw.Rows
+	s.Fields = raw.Fields
+	s.KeywordsFilters = raw.KeywordsFilters
+	s.Error = raw.Error
+	s.Headers = raw.Headers
+	s.Inputs = raw.Inputs
+	s.AllowEmptyInputs = raw.AllowEmptyInputs
+	return nil
 }
 
 // SearchPath describes a search request URL/parameter template.
@@ -204,9 +237,10 @@ type ResponseInfo struct {
 
 // Rows describes how to select result rows in the response document.
 type Rows struct {
-	Selector string       `yaml:"selector"`
-	After    int          `yaml:"after"`
-	Filters  []FilterStep `yaml:"filters"`
+	Selector string          `yaml:"selector"`
+	After    int             `yaml:"after"`
+	Filters  []FilterStep    `yaml:"filters"`
+	Count    *SelectorField  `yaml:"count,omitempty"` // row limit selector (e.g. JSON $.numFound)
 }
 
 // Field describes how to extract and transform a value for a result row.

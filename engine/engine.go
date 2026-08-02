@@ -326,8 +326,9 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 		return nil, err
 	}
 
-	// Build request with empty/"false" value filtering
-	values := filterInputs(rendered)
+	// Build request with empty/"false" value filtering (allowEmptyInputs
+	// overrides the empty-value filter entirely)
+	values := filterInputs(rendered, p.def.Search.AllowEmptyInputs)
 	appendRawParams(values, rawParams)
 
 	var req *http.Request

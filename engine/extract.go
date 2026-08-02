@@ -49,6 +49,14 @@ func (p *Provider) parseResults(ctx context.Context, body string, responseType s
 	if p.def.Search.Rows.After > 0 && p.def.Search.Rows.After < len(rows) {
 		rows = rows[p.def.Search.Rows.After:]
 	}
+	// rows.count caps the number of rows (e.g. JSON $.numFound).
+	if c := p.def.Search.Rows.Count; c != nil && c.Selector != "" {
+		if nodes, err := doc.Find(c.Selector); err == nil && len(nodes) > 0 {
+			if n, perr := strconv.Atoi(strings.TrimSpace(nodes[0].Text())); perr == nil && n > 0 && n < len(rows) {
+				rows = rows[:n]
+			}
+		}
+	}
 
 	// Apply row-level filters (e.g. andmatch) before field extraction.
 	if len(p.def.Search.Rows.Filters) > 0 {
