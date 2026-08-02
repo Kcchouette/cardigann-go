@@ -50,3 +50,16 @@ func TestValidateUnknownType(t *testing.T) {
 		t.Errorf("expected an unknown-type warning, got %v", d.Validate())
 	}
 }
+
+func TestValidateDocumentedTrackerTypes(t *testing.T) {
+	// public/semi-private/private are the documented tracker types: they must
+	// not trigger the "unknown type" warning.
+	for _, typ := range []string{"public", "semi-private", "private"} {
+		d := IndexerDefinition{ID: "x", Type: typ}
+		for _, w := range d.Validate() {
+			if strings.Contains(w, "unknown type") {
+				t.Errorf("type %q should not warn as unknown, got %q", typ, w)
+			}
+		}
+	}
+}

@@ -87,8 +87,8 @@ func (d IndexerDefinition) Validate() []string {
 	switch d.Type {
 	case "usenet", "ddl", "streaming":
 		// explicit protocols are checked below
-	case "":
-		// empty type is normal for torrent definitions
+	case "", "public", "semi-private", "private":
+		// documented tracker types: no warning
 	default:
 		warns = append(warns, fmt.Sprintf("unknown type %q, treated as torrent", d.Type))
 	}

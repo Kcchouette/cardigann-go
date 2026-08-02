@@ -61,6 +61,14 @@ func (p *Provider) resolveDownload(ctx context.Context, client interface {
 			break
 		}
 
+		// Space every chain request with the plain client (the authenticated
+		// IndexerClient spaces requests internally via its RoundTripper).
+		if p.client == nil && p.limiter != nil {
+			if err := p.limiter.Wait(ctx); err != nil {
+				break
+			}
+		}
+
 		body, err := p.beforeRequest(ctx, client, step, stepURL, rctx, dl.Headers)
 		if err != nil {
 			// Soft-fail: keep the last response and the row's raw values.
