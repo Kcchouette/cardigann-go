@@ -63,3 +63,46 @@ func TestValidateDocumentedTrackerTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_UnknownEncoding(t *testing.T) {
+	yaml := `
+id: enc
+name: Enc
+type: public
+encoding: klingon
+caps:
+  modes:
+    search: [q]
+search:
+  path: /s
+  rows:
+    selector: x
+  fields:
+    title:
+      selector: y
+`
+	def, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	warns := def.Validate()
+	found := false
+	for _, w := range warns {
+		if strings.Contains(w, "klingon") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected a warning about unknown encoding klingon, got %v", warns)
+	}
+}
+
+func TestValidate_UTF8NoWarning(t *testing.T) {
+	def := IndexerDefinition{Encoding: "UTF-8"}
+	for _, w := range def.Validate() {
+		if strings.Contains(w, "encoding") {
+			t.Errorf("unexpected encoding warning for UTF-8: %q", w)
+		}
+	}
+}

@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/transform"
 )
 
 func TestLogin_FormSuccess(t *testing.T) {
@@ -1099,5 +1101,54 @@ func TestLogin_CaptchaRequired(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "captcha") {
 		t.Errorf("expected error to mention captcha, got %q", err.Error())
+	}
+}
+
+// TestLogin_EncodingWindows1251 covers the v11 encoding: field on login
+// pages: a windows-1251 selectorinputs page is decoded before extraction.
+func TestLogin_EncodingWindows1251(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login" && r.Method == http.MethodGet:
+			page := `<html><body><form id="login"><input type="hidden" name="csrf" value="токен"></form></body></html>`
+			encoded, _, _ := transform.Bytes(charmap.Windows1251.NewEncoder(), []byte(page))
+			_, _ = w.Write(encoded)
+		case r.URL.Path == "/login" && r.Method == http.MethodPost:
+			_ = r.ParseForm()
+			if r.FormValue("csrf") != "токен" {
+				t.Errorf("expected decoded csrf value, got %q", r.FormValue("csrf"))
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
+			_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
+		default:
+			_, _ = w.Write([]byte(`<html><body><div class="error">unexpected</div></body></html>`))
+		}
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Encoding: "windows-1251",
+		Login: cmodel.Login{
+			Method: "form",
+			Path:   "/login",
+			SelectorInputs: map[string]cmodel.SelectorField{
+				"csrf": {Selector: "input[name=csrf]", Attribute: "value"},
+			},
+			Inputs: map[string]string{
+				"username": "alice",
+				"password": "secret",
+			},
+			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, nil)
+	if err != nil {
+		t.Fatalf("expected successful login with decoded selectorinputs, got error: %v", err)
 	}
 }

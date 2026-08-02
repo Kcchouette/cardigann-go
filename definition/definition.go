@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Kcchouette/cardigann-go/internal/httputil"
 )
 
 // IndexerDefinition represents a complete Cardigann definition (v11).
@@ -88,6 +90,10 @@ func (d IndexerDefinition) Validate() []string {
 
 	if _, legacy := d.Login.Extra["login"]; legacy {
 		warns = append(warns, "login block uses legacy 'login:' key; use 'path:' (the legacy key is ignored)")
+	}
+
+	if d.Encoding != "" && !httputil.KnownEncoding(d.Encoding) {
+		warns = append(warns, fmt.Sprintf("unknown response encoding %q, reading as UTF-8", d.Encoding))
 	}
 
 	switch d.Type {

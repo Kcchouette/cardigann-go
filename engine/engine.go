@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -410,7 +409,7 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20)) // 16 MiB cap
+	body, err := httputil.ReadBodyLimited(resp, p.def.Encoding, 16<<20) // 16 MiB cap, decoded per encoding
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}

@@ -3,7 +3,6 @@ package login
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -142,7 +141,7 @@ func doLoginRequest(ctx context.Context, client *http.Client, def cmodel.Indexer
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	body, err := httputil.ReadBodyLimited(resp, def.Encoding, 4<<20)
 	if err != nil {
 		return fmt.Errorf("reading login response: %w", err)
 	}
@@ -152,7 +151,7 @@ func doLoginRequest(ctx context.Context, client *http.Client, def cmodel.Indexer
 	}
 
 	if def.Login.Test != nil && def.Login.Test.Path != "" {
-		return verifyTest(ctx, client, baseURL, *def.Login.Test)
+		return verifyTest(ctx, client, baseURL, def, *def.Login.Test)
 	}
 	return nil
 }
@@ -181,7 +180,7 @@ func resolveSelectorInputs(ctx context.Context, client *http.Client, def cmodel.
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	body, err := httputil.ReadBodyLimited(resp, def.Encoding, 4<<20)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +239,7 @@ func extractSelectorInputs(ctx context.Context, client *http.Client, def cmodel.
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	body, err := httputil.ReadBodyLimited(resp, def.Encoding, 4<<20)
 	if err != nil {
 		return nil, err
 	}

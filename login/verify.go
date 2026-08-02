@@ -3,7 +3,6 @@ package login
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
@@ -25,7 +24,7 @@ func checkLoginErrors(body string, errorSelectors []cmodel.ErrorSelector, rctx t
 
 // verifyTest sends a GET request to login.test.path and checks for the
 // expected selector (indicator of an authenticated session).
-func verifyTest(ctx context.Context, client *http.Client, baseURL string, test cmodel.Test) error {
+func verifyTest(ctx context.Context, client *http.Client, baseURL string, def cmodel.IndexerDefinition, test cmodel.Test) error {
 	testURL := httputil.ResolveURL(baseURL, test.Path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL, nil)
 	if err != nil {
@@ -37,7 +36,7 @@ func verifyTest(ctx context.Context, client *http.Client, baseURL string, test c
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	body, err := httputil.ReadBodyLimited(resp, def.Encoding, 4<<20)
 	if err != nil {
 		return fmt.Errorf("reading test response: %w", err)
 	}

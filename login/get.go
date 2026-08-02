@@ -3,7 +3,6 @@ package login
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 
@@ -53,7 +52,7 @@ func loginGet(ctx context.Context, client *http.Client, def cmodel.IndexerDefini
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	body, err := httputil.ReadBodyLimited(resp, def.Encoding, 4<<20)
 	if err != nil {
 		return fmt.Errorf("reading login response: %w", err)
 	}
@@ -63,7 +62,7 @@ func loginGet(ctx context.Context, client *http.Client, def cmodel.IndexerDefini
 	}
 
 	if def.Login.Test != nil && def.Login.Test.Path != "" {
-		return verifyTest(ctx, client, baseURL, *def.Login.Test)
+		return verifyTest(ctx, client, baseURL, def, *def.Login.Test)
 	}
 	return nil
 }
@@ -96,7 +95,7 @@ func loginOneURL(ctx context.Context, client *http.Client, def cmodel.IndexerDef
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	body, err := httputil.ReadBodyLimited(resp, def.Encoding, 4<<20)
 	if err != nil {
 		return fmt.Errorf("reading login response: %w", err)
 	}
@@ -106,7 +105,7 @@ func loginOneURL(ctx context.Context, client *http.Client, def cmodel.IndexerDef
 	}
 
 	if def.Login.Test != nil && def.Login.Test.Path != "" {
-		return verifyTest(ctx, client, baseURL, *def.Login.Test)
+		return verifyTest(ctx, client, baseURL, def, *def.Login.Test)
 	}
 	return nil
 }

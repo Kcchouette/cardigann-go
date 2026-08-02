@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,8 @@ import (
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
 	"github.com/Kcchouette/cardigann-go/httpclient"
 	"github.com/Kcchouette/cardigann-go/release"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/transform"
 )
 
 // yamlFixture is a minimal Cardigann v11 definition invented for testing (not a
@@ -2008,5 +2011,163 @@ search:
 	}
 	if releases[0].Title != "A" || releases[1].Title != "B" {
 		t.Errorf("unexpected titles: %q, %q", releases[0].Title, releases[1].Title)
+	}
+}
+
+// TestSearch_EncodingWindows1251 covers the v11 encoding: field: a
+// windows-1251 response body is decoded before HTML parsing.
+func TestSearch_EncodingWindows1251(t *testing.T) {
+	yamlDef := `
+id: cp1251
+name: CP1251
+description: encoding test
+language: ru-RU
+type: public
+encoding: windows-1251
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	html := `<table class="results"><tr><td><a class="title">Фильм Название</a><a class="dl" href="/dl/1"></a></td></tr></table>`
+	encoded, _, err := transform.Bytes(charmap.Windows1251.NewEncoder(), []byte(html))
+	if err != nil {
+		t.Fatalf("encoding fixture: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(encoded)
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+	if want := "Фильм Название"; releases[0].Title != want {
+		t.Errorf("title = %q, want %q (decoded from windows-1251)", releases[0].Title, want)
+	}
+}
+
+// TestSearch_EncodingUTF8Passthrough covers the default UTF-8 case: non-ASCII
+// characters round-trip unchanged (no decoding applied).
+func TestSearch_EncodingUTF8Passthrough(t *testing.T) {
+	yamlDef := `
+id: utf8
+name: UTF8
+description: encoding passthrough test
+language: fr-FR
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	html := `<table class="results"><tr><td><a class="title">Étrange été à Paris</a><a class="dl" href="/dl/1"></a></td></tr></table>`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(html))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+	if want := "Étrange été à Paris"; releases[0].Title != want {
+		t.Errorf("title = %q, want %q", releases[0].Title, want)
+	}
+}
+
+// TestSearch_EncodingKinozalFixture runs the committed kinozal-magnet fixture
+// (windows-1251) end-to-end: the search page is served as windows-1251 bytes
+// and the extracted title must decode cleanly (no U+FFFD replacement chars).
+// The before-chain infohash is asserted once DownloadUri seeding lands (T2);
+// here only the row fields are checked.
+func TestSearch_EncodingKinozalFixture(t *testing.T) {
+	raw, err := os.ReadFile("../internal/defstest/testdata/kinozal-magnet.yml")
+	if err != nil {
+		t.Fatalf("reading kinozal fixture: %v", err)
+	}
+	def, err := cmodel.Parse(raw)
+	if err != nil {
+		t.Fatalf("parsing kinozal fixture: %v", err)
+	}
+
+	html := `<table><tbody><tr>
+	  <td class="bt"><img onclick="cat 12"></td>
+	  <td class="nam"><a href="/details.php?id=1">Фильм Название 2024</a></td>
+	  <td>1.5 ГБ</td><td>10</td><td>5</td><td>сегодня 10:00</td>
+	</tr></tbody></table>`
+	encoded, _, err := transform.Bytes(charmap.Windows1251.NewEncoder(), []byte(html))
+	if err != nil {
+		t.Fatalf("encoding fixture: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/browse.php" {
+			_, _ = w.Write(encoded)
+			return
+		}
+		_, _ = w.Write([]byte("<html><body></body></html>"))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+	if strings.Contains(releases[0].Title, "\uFFFD") {
+		t.Errorf("title still contains U+FFFD (not decoded): %q", releases[0].Title)
+	}
+	if !strings.Contains(releases[0].Title, "2024") {
+		t.Errorf("title lost the year: %q", releases[0].Title)
+	}
+	if want := "/download.php?id=1"; releases[0].DownloadLink != want {
+		t.Errorf("download link = %q, want %q", releases[0].DownloadLink, want)
 	}
 }
