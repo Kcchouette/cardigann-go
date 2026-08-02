@@ -150,13 +150,23 @@ type Login struct {
 	Path           string                   `yaml:"path"` // login page path (v11 canonical key)
 	Inputs         map[string]string        `yaml:"inputs"`
 	SelectorInputs map[string]SelectorField `yaml:"selectorinputs,omitempty"`
+	Selectors      bool                     `yaml:"selectors,omitempty"` // inputs keys are CSS selectors against the login page
 	Form           string                   `yaml:"form,omitempty"`
 	Error          []ErrorSelector          `yaml:"error"`
 	Test           *Test                    `yaml:"test,omitempty"`
 	Headers        map[string][]string      `yaml:"headers,omitempty"`
 	Cookies        []string                 `yaml:"cookies,omitempty"`
 	SubmitPath     string                   `yaml:"submitpath,omitempty"`
+	Captcha        *Captcha                 `yaml:"captcha,omitempty"`
 	Extra          map[string]any           `yaml:",inline"`
+}
+
+// Captcha describes a login captcha block (type image|text, selector, input).
+// Interactive solving is not supported; the engine reports a clear error.
+type Captcha struct {
+	Type     string `yaml:"type"`
+	Selector string `yaml:"selector"`
+	Input    string `yaml:"input"`
 }
 
 // ErrorSelector describes a selector used to detect a login failure.

@@ -20,6 +20,9 @@ import (
 // set, the targeted form is selected via this CSS selector (action URL and
 // extraction of inputs scoped to that form).
 func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
+	if def.Login.Captcha != nil {
+		return &ErrLoginFailed{Reason: fmt.Sprintf("captcha required (%s): interactive solving not supported", def.Login.Captcha.Type)}
+	}
 	rctx := tmpl.Context{Config: config}
 
 	loginPath, err := tmpl.Render(def.Login.Path, rctx)
@@ -47,12 +50,24 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 	}
 
 	values := url.Values{}
-	for name, valueTmpl := range def.Login.Inputs {
-		rendered, err := tmpl.Render(valueTmpl, rctx)
+	if def.Login.Selectors {
+		// login.selectors: the inputs keys are CSS selectors against the
+		// login page; their first match contributes name/value attributes.
+		resolved, err := resolveSelectorInputs(ctx, client, def, baseURL, rctx)
 		if err != nil {
-			return fmt.Errorf("rendering login input %q: %w", name, err)
+			return fmt.Errorf("resolving selector inputs: %w", err)
 		}
-		values.Set(name, rendered)
+		for k, v := range resolved {
+			values.Set(k, v)
+		}
+	} else {
+		for name, valueTmpl := range def.Login.Inputs {
+			rendered, err := tmpl.Render(valueTmpl, rctx)
+			if err != nil {
+				return fmt.Errorf("rendering login input %q: %w", name, err)
+			}
+			values.Set(name, rendered)
+		}
 	}
 	// Merge extracted values (they override static inputs if same key)
 	for k, v := range extracted.Values {
@@ -66,6 +81,9 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 // login path, without fetching the login page first (no selectorinputs, no
 // form selector). Used by login.method: post.
 func loginPost(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
+	if def.Login.Captcha != nil {
+		return &ErrLoginFailed{Reason: fmt.Sprintf("captcha required (%s): interactive solving not supported", def.Login.Captcha.Type)}
+	}
 	rctx := tmpl.Context{Config: config}
 
 	loginPath, err := tmpl.Render(def.Login.Path, rctx)
@@ -81,12 +99,22 @@ func loginPost(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 	loginURL := httputil.ResolveURL(baseURL, loginPath)
 
 	values := url.Values{}
-	for name, valueTmpl := range def.Login.Inputs {
-		rendered, err := tmpl.Render(valueTmpl, rctx)
+	if def.Login.Selectors {
+		resolved, err := resolveSelectorInputs(ctx, client, def, baseURL, rctx)
 		if err != nil {
-			return fmt.Errorf("rendering login input %q: %w", name, err)
+			return fmt.Errorf("resolving selector inputs: %w", err)
 		}
-		values.Set(name, rendered)
+		for k, v := range resolved {
+			values.Set(k, v)
+		}
+	} else {
+		for name, valueTmpl := range def.Login.Inputs {
+			rendered, err := tmpl.Render(valueTmpl, rctx)
+			if err != nil {
+				return fmt.Errorf("rendering login input %q: %w", name, err)
+			}
+			values.Set(name, rendered)
+		}
 	}
 
 	return doLoginRequest(ctx, client, def, baseURL, rctx, loginURL, values)
@@ -126,6 +154,55 @@ func doLoginRequest(ctx context.Context, client *http.Client, def cmodel.Indexer
 		return verifyTest(ctx, client, baseURL, *def.Login.Test)
 	}
 	return nil
+}
+
+// resolveSelectorInputs resolves the login inputs keys as CSS selectors
+// against the login page (login.selectors: true): each selector's first
+// match contributes its name/value attributes to the POST body.
+func resolveSelectorInputs(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, rctx tmpl.Context) (map[string]string, error) {
+	values := make(map[string]string)
+
+	loginPath, err := tmpl.Render(def.Login.Path, rctx)
+	if err != nil {
+		return nil, fmt.Errorf("rendering login path: %w", err)
+	}
+	loginURL := httputil.ResolveURL(baseURL, loginPath)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, loginURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching login page: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, err
+	}
+
+	doc, err := selector.NewHTMLDocument(string(body))
+	if err != nil {
+		return nil, fmt.Errorf("login.selectors requires an HTML login page")
+	}
+	for selStr := range def.Login.Inputs {
+		nodes, err := doc.Find(selStr)
+		if err != nil || len(nodes) == 0 {
+			continue
+		}
+		name, _ := nodes[0].Attr("name")
+		if name == "" {
+			name = selStr
+		}
+		value, _ := nodes[0].Attr("value")
+		if value == "" {
+			value = nodes[0].Text()
+		}
+		values[name] = value
+	}
+	return values, nil
 }
 
 // extractSelectorInputsResult holds the extracted values and optional form action.

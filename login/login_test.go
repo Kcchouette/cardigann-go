@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -969,5 +970,85 @@ func TestLogin_FormWithSubmitPathOverride(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("expected SubmitPath to override form action, got error: %v", err)
+	}
+}
+
+// TestLogin_SelectorsTrue covers login.selectors: the inputs keys are CSS
+// selectors resolved against the login page (name/value attributes).
+func TestLogin_SelectorsTrue(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`<html><body><form id="login"><input name="uid" value="user123"><input name="token" value="tok456"></form></body></html>`))
+		case r.URL.Path == "/login" && r.Method == http.MethodPost:
+			_ = r.ParseForm()
+			if r.FormValue("uid") != "user123" || r.FormValue("token") != "tok456" {
+				t.Errorf("expected uid=user123 token=tok456, got uid=%q token=%q", r.FormValue("uid"), r.FormValue("token"))
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
+			_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
+		default:
+			_, _ = w.Write([]byte(`<html><body><div class="error">unexpected</div></body></html>`))
+		}
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method:    "form",
+			Path:      "/login",
+			Selectors: true,
+			Inputs: map[string]string{
+				"input[name=uid]":   "",
+				"input[name=token]": "",
+			},
+			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, nil)
+	if err != nil {
+		t.Fatalf("expected successful selector login, got error: %v", err)
+	}
+}
+
+// TestLogin_CaptchaRequired covers login.captcha: a clear error instead of a
+// silent login-then-failed-search.
+func TestLogin_CaptchaRequired(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><body>login</body></html>`))
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method: "form",
+			Path:   "/login",
+			Captcha: &cmodel.Captcha{
+				Type:     "image",
+				Selector: "img.captcha",
+				Input:    "private_key",
+			},
+			Inputs: map[string]string{"username": "alice"},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{})
+	if err == nil {
+		t.Fatal("expected captcha error, got nil")
+	}
+	if _, ok := err.(*ErrLoginFailed); !ok {
+		t.Errorf("expected *ErrLoginFailed, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "captcha") {
+		t.Errorf("expected error to mention captcha, got %q", err.Error())
 	}
 }
