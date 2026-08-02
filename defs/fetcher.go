@@ -93,7 +93,7 @@ func (f *Fetcher) FetchVersion(ctx context.Context, version string) ([]RawDefini
 	if err != nil {
 		return nil, fmt.Errorf("downloading tarball: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	f.lastETag = resp.Header.Get("ETag")
 	if resp.StatusCode == http.StatusNotModified {
@@ -108,7 +108,7 @@ func (f *Fetcher) FetchVersion(ctx context.Context, version string) ([]RawDefini
 	if err != nil {
 		return nil, fmt.Errorf("opening gzip stream: %w", err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
 
@@ -181,7 +181,7 @@ func (f *Fetcher) FetchAll(ctx context.Context) ([]RawDefinition, error) {
 	if err != nil {
 		return nil, fmt.Errorf("downloading tarball: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	f.lastETag = resp.Header.Get("ETag")
 	if resp.StatusCode == http.StatusNotModified {
@@ -196,7 +196,7 @@ func (f *Fetcher) FetchAll(ctx context.Context) ([]RawDefinition, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening gzip stream: %w", err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
 

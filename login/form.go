@@ -50,7 +50,6 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 	// If Form selector found a form action, use it as POST target
 	// (SubmitPath takes precedence if explicitly set)
 	if def.Login.SubmitPath == "" && extracted.FormAction != "" {
-		loginPath = extracted.FormAction
 		loginURL = httputil.ResolveURL(baseURL, extracted.FormAction)
 	}
 
@@ -80,7 +79,7 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 	if err != nil {
 		return fmt.Errorf("login request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
@@ -128,7 +127,7 @@ func extractSelectorInputs(ctx context.Context, client *http.Client, def cmodel.
 	if err != nil {
 		return nil, fmt.Errorf("fetching login page: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {

@@ -17,16 +17,16 @@ func TestLogin_FormSuccess(t *testing.T) {
 			_ = r.ParseForm()
 			if r.FormValue("username") == "alice" && r.FormValue("password") == "secret" {
 				http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
-				w.Write([]byte(`<html><body>Bienvenue</body></html>`))
+				_, _ = w.Write([]byte(`<html><body>Bienvenue</body></html>`))
 				return
 			}
-			w.Write([]byte(`<html><body><div class="error">Invalid credentials</div></body></html>`))
+			_, _ = w.Write([]byte(`<html><body><div class="error">Invalid credentials</div></body></html>`))
 		case "/profile":
 			if _, err := r.Cookie("session"); err == nil {
-				w.Write([]byte(`<html><body><div class="logged-in">Mon compte</div></body></html>`))
+				_, _ = w.Write([]byte(`<html><body><div class="logged-in">Mon compte</div></body></html>`))
 				return
 			}
-			w.Write([]byte(`<html><body>Not logged in</body></html>`))
+			_, _ = w.Write([]byte(`<html><body>Not logged in</body></html>`))
 		}
 	}))
 	defer server.Close()
@@ -59,7 +59,7 @@ func TestLogin_FormSuccess(t *testing.T) {
 func TestLogin_FormWrongCredentials(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/login" {
-			w.Write([]byte(`<html><body><div class="error">Invalid credentials</div></body></html>`))
+			_, _ = w.Write([]byte(`<html><body><div class="error">Invalid credentials</div></body></html>`))
 		}
 	}))
 	defer server.Close()
@@ -146,10 +146,10 @@ func TestLogin_GetWithInputs(t *testing.T) {
 		}
 		_ = r.ParseForm()
 		if r.FormValue("action") == "latest" && r.FormValue("passkey") == "abc123" {
-			w.Write([]byte(`<html><body>OK</body></html>`))
+			_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
 			return
 		}
-		w.Write([]byte(`<html><body><div class="error">bad params</div></body></html>`))
+		_, _ = w.Write([]byte(`<html><body><div class="error">bad params</div></body></html>`))
 	}))
 	defer server.Close()
 
@@ -177,7 +177,7 @@ func TestLogin_GetWithInputs(t *testing.T) {
 
 func TestLogin_GetWithErrorResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html><body><div class="error">Invalid API key</div></body></html>`))
+		_, _ = w.Write([]byte(`<html><body><div class="error">Invalid API key</div></body></html>`))
 	}))
 	defer server.Close()
 
@@ -211,7 +211,7 @@ func TestLogin_GetWithoutInputs(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
-		w.Write([]byte(`<html><body>OK</body></html>`))
+		_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
 	}))
 	defer server.Close()
 
@@ -235,9 +235,9 @@ func TestLogin_GetWithTestVerification(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api":
-			w.Write([]byte(`<html><body>OK</body></html>`))
+			_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
 		case "/api/status":
-			w.Write([]byte(`<html><body><div class="auth">Authenticated</div></body></html>`))
+			_, _ = w.Write([]byte(`<html><body><div class="auth">Authenticated</div></body></html>`))
 		}
 	}))
 	defer server.Close()
@@ -263,7 +263,7 @@ func TestLogin_FormWithSelectorInputs(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /login":
-			w.Write([]byte(`<html><body>
+			_, _ = w.Write([]byte(`<html><body>
 				<form method="post">
 					<input type="hidden" name="csrf_token" value="abc123secret"/>
 					<input type="text" name="username"/>
@@ -277,16 +277,16 @@ func TestLogin_FormWithSelectorInputs(t *testing.T) {
 			pass := r.FormValue("password")
 			if csrf == "abc123secret" && user == "alice" && pass == "secret" {
 				http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
-				w.Write([]byte(`<html><body>Bienvenue</body></html>`))
+				_, _ = w.Write([]byte(`<html><body>Bienvenue</body></html>`))
 				return
 			}
-			w.Write([]byte(`<html><body><div class="error">Invalid</div></body></html>`))
+			_, _ = w.Write([]byte(`<html><body><div class="error">Invalid</div></body></html>`))
 		case "GET /profile":
 			if _, err := r.Cookie("session"); err == nil {
-				w.Write([]byte(`<html><body><div class="logged-in">OK</div></body></html>`))
+				_, _ = w.Write([]byte(`<html><body><div class="logged-in">OK</div></body></html>`))
 				return
 			}
-			w.Write([]byte(`<html><body>Not logged in</body></html>`))
+			_, _ = w.Write([]byte(`<html><body>Not logged in</body></html>`))
 		}
 	}))
 	defer server.Close()
@@ -323,7 +323,7 @@ func TestLogin_FormWithSelectorInputsFilters(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /login":
-			w.Write([]byte(`<html><body>
+			_, _ = w.Write([]byte(`<html><body>
 				<script>var token = "tok_987654321";</script>
 				<form method="post">
 					<input type="hidden" name="csrf_token" value=""/>
@@ -335,16 +335,16 @@ func TestLogin_FormWithSelectorInputsFilters(t *testing.T) {
 			user := r.FormValue("username")
 			if csrf == "tok_987654321" && user == "alice" {
 				http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
-				w.Write([]byte(`<html><body>OK</body></html>`))
+				_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
 				return
 			}
-			w.Write([]byte(`<html><body><div class="error">Missing CSRF</div></body></html>`))
+			_, _ = w.Write([]byte(`<html><body><div class="error">Missing CSRF</div></body></html>`))
 		case "GET /profile":
 			if _, err := r.Cookie("session"); err == nil {
-				w.Write([]byte(`<html><body><div class="logged-in">OK</div></body></html>`))
+				_, _ = w.Write([]byte(`<html><body><div class="logged-in">OK</div></body></html>`))
 				return
 			}
-			w.Write([]byte(`<html><body>Not logged in</body></html>`))
+			_, _ = w.Write([]byte(`<html><body>Not logged in</body></html>`))
 		}
 	}))
 	defer server.Close()
@@ -387,16 +387,16 @@ func TestLogin_FormWithoutSelectorInputs(t *testing.T) {
 			_ = r.ParseForm()
 			if r.FormValue("username") == "bob" && r.FormValue("password") == "pass" {
 				http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
-				w.Write([]byte(`<html><body>OK</body></html>`))
+				_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
 				return
 			}
-			w.Write([]byte(`<html><body><div class="error">Bad</div></body></html>`))
+			_, _ = w.Write([]byte(`<html><body><div class="error">Bad</div></body></html>`))
 		case "GET /profile":
 			if _, err := r.Cookie("session"); err == nil {
-				w.Write([]byte(`<html><body><div class="logged-in">OK</div></body></html>`))
+				_, _ = w.Write([]byte(`<html><body><div class="logged-in">OK</div></body></html>`))
 				return
 			}
-			w.Write([]byte(`<html><body>Not logged in</body></html>`))
+			_, _ = w.Write([]byte(`<html><body>Not logged in</body></html>`))
 		}
 	}))
 	defer server.Close()
@@ -431,7 +431,7 @@ func TestLogin_FormWithOptionalSelectorInputs(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /login":
 			// Page without any CSRF token — optional selector should not fail
-			w.Write([]byte(`<html><body>
+			_, _ = w.Write([]byte(`<html><body>
 				<form method="post">
 					<input type="text" name="username"/>
 				</form>
@@ -440,16 +440,16 @@ func TestLogin_FormWithOptionalSelectorInputs(t *testing.T) {
 			_ = r.ParseForm()
 			if r.FormValue("username") == "alice" {
 				http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
-				w.Write([]byte(`<html><body>OK</body></html>`))
+				_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
 				return
 			}
-			w.Write([]byte(`<html><body><div class="error">Bad</div></body></html>`))
+			_, _ = w.Write([]byte(`<html><body><div class="error">Bad</div></body></html>`))
 		case "GET /profile":
 			if _, err := r.Cookie("session"); err == nil {
-				w.Write([]byte(`<html><body><div class="logged-in">OK</div></body></html>`))
+				_, _ = w.Write([]byte(`<html><body><div class="logged-in">OK</div></body></html>`))
 				return
 			}
-			w.Write([]byte(`<html><body>Not logged in</body></html>`))
+			_, _ = w.Write([]byte(`<html><body>Not logged in</body></html>`))
 		}
 	}))
 	defer server.Close()
@@ -488,7 +488,7 @@ func TestLogin_OneURLSuccess(t *testing.T) {
 		if r.URL.RawQuery != "" {
 			t.Errorf("expected no query params, got %q", r.URL.RawQuery)
 		}
-		w.Write([]byte(`<html><body>OK</body></html>`))
+		_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
 	}))
 	defer server.Close()
 
@@ -510,7 +510,7 @@ func TestLogin_OneURLSuccess(t *testing.T) {
 
 func TestLogin_OneURLErrorResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html><body><div class="error">Access denied</div></body></html>`))
+		_, _ = w.Write([]byte(`<html><body><div class="error">Access denied</div></body></html>`))
 	}))
 	defer server.Close()
 
@@ -543,10 +543,10 @@ func TestLogin_FormWithHeaders(t *testing.T) {
 				return
 			}
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
-			w.Write([]byte(`<html><body>OK</body></html>`))
+			_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
 			return
 		}
-		w.Write([]byte(`<html><body><div class="error">unexpected</div></body></html>`))
+		_, _ = w.Write([]byte(`<html><body><div class="error">unexpected</div></body></html>`))
 	}))
 	defer server.Close()
 
@@ -587,10 +587,10 @@ func TestLogin_FormWithCookies(t *testing.T) {
 				return
 			}
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
-			w.Write([]byte(`<html><body>OK</body></html>`))
+			_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
 			return
 		}
-		w.Write([]byte(`<html><body><div class="error">unexpected</div></body></html>`))
+		_, _ = w.Write([]byte(`<html><body><div class="error">unexpected</div></body></html>`))
 	}))
 	defer server.Close()
 
@@ -625,19 +625,19 @@ func TestLogin_FormWithSubmitPath(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/login-page":
-			w.Write([]byte(`<html><body>login form</body></html>`))
+			_, _ = w.Write([]byte(`<html><body>login form</body></html>`))
 		case "/submit":
 			if r.Method == http.MethodPost {
 				_ = r.ParseForm()
 				if r.FormValue("username") == "alice" {
 					http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
-					w.Write([]byte(`<html><body>OK</body></html>`))
+					_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
 					return
 				}
 			}
-			w.Write([]byte(`<html><body><div class="error">bad</div></body></html>`))
+			_, _ = w.Write([]byte(`<html><body><div class="error">bad</div></body></html>`))
 		default:
-			w.Write([]byte(`<html><body><div class="error">unexpected path</div></body></html>`))
+			_, _ = w.Write([]byte(`<html><body><div class="error">unexpected path</div></body></html>`))
 		}
 	}))
 	defer server.Close()
@@ -671,7 +671,7 @@ func TestLogin_FormWithExplicitSelector(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/login-page":
-			w.Write([]byte(`<html><body>
+			_, _ = w.Write([]byte(`<html><body>
 				<form id="register" action="/register">
 					<input name="email" />
 				</form>
@@ -685,12 +685,12 @@ func TestLogin_FormWithExplicitSelector(t *testing.T) {
 			_ = r.ParseForm()
 			if r.FormValue("username") == "alice" && r.FormValue("password") == "secret" && r.FormValue("csrf") == "tok123" {
 				http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
-				w.Write([]byte(`<html><body>OK</body></html>`))
+				_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
 				return
 			}
-			w.Write([]byte(`<html><body><div class="error">bad</div></body></html>`))
+			_, _ = w.Write([]byte(`<html><body><div class="error">bad</div></body></html>`))
 		default:
-			w.Write([]byte(`<html><body><div class="error">wrong path: ` + r.URL.Path + `</div></body></html>`))
+			_, _ = w.Write([]byte(`<html><body><div class="error">wrong path: ` + r.URL.Path + `</div></body></html>`))
 		}
 	}))
 	defer server.Close()
@@ -725,7 +725,7 @@ func TestLogin_FormWithExplicitSelector(t *testing.T) {
 
 func TestLogin_FormSelectorNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html><body>
+		_, _ = w.Write([]byte(`<html><body>
 			<form id="register" action="/register">
 				<input name="email" />
 			</form>
@@ -765,16 +765,16 @@ func TestLogin_FormSelectorEmpty(t *testing.T) {
 			_ = r.ParseForm()
 			if r.FormValue("username") == "alice" && r.FormValue("password") == "secret" {
 				http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
-				w.Write([]byte(`<html><body>OK</body></html>`))
+				_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
 				return
 			}
-			w.Write([]byte(`<html><body><div class="error">bad</div></body></html>`))
+			_, _ = w.Write([]byte(`<html><body><div class="error">bad</div></body></html>`))
 		case "/profile":
 			if _, err := r.Cookie("session"); err == nil {
-				w.Write([]byte(`<html><body><div class="logged-in">OK</div></body></html>`))
+				_, _ = w.Write([]byte(`<html><body><div class="logged-in">OK</div></body></html>`))
 				return
 			}
-			w.Write([]byte(`<html><body>Not logged in</body></html>`))
+			_, _ = w.Write([]byte(`<html><body>Not logged in</body></html>`))
 		}
 	}))
 	defer server.Close()
@@ -809,7 +809,7 @@ func TestLogin_FormWithSubmitPathOverride(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/login-page":
-			w.Write([]byte(`<html><body>
+			_, _ = w.Write([]byte(`<html><body>
 				<form id="login-form" action="/auth">
 					<input name="username" />
 					<input name="password" />
@@ -819,12 +819,12 @@ func TestLogin_FormWithSubmitPathOverride(t *testing.T) {
 			_ = r.ParseForm()
 			if r.FormValue("username") == "alice" && r.FormValue("password") == "secret" {
 				http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
-				w.Write([]byte(`<html><body>OK</body></html>`))
+				_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
 				return
 			}
-			w.Write([]byte(`<html><body><div class="error">bad</div></body></html>`))
+			_, _ = w.Write([]byte(`<html><body><div class="error">bad</div></body></html>`))
 		default:
-			w.Write([]byte(`<html><body><div class="error">wrong path: ` + r.URL.Path + `</div></body></html>`))
+			_, _ = w.Write([]byte(`<html><body><div class="error">wrong path: ` + r.URL.Path + `</div></body></html>`))
 		}
 	}))
 	defer server.Close()

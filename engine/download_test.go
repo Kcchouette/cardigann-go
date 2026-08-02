@@ -95,7 +95,7 @@ func TestResolveDownload_BeforePostPath(t *testing.T) {
 				t.Errorf("expected POST, got %s", r.Method)
 			}
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, `<html><body><a class="real-dl" href="/real/download.torrent">Download</a></body></html>`)
+			_, _ = fmt.Fprint(w, `<html><body><a class="real-dl" href="/real/download.torrent">Download</a></body></html>`)
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -158,7 +158,7 @@ func TestResolveDownload_BeforePathSelector(t *testing.T) {
 		switch r.URL.Path {
 		case "/intermediate/42":
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, `<html><body><a class="real-dl" href="/dl/final.torrent">Download</a></body></html>`)
+			_, _ = fmt.Fprint(w, `<html><body><a class="real-dl" href="/dl/final.torrent">Download</a></body></html>`)
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -218,7 +218,7 @@ func TestResolveDownload_Headers(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedHeader = r.Header.Get("X-Custom-Token")
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, `<html><body><a class="dl" href="/dl/file.torrent">DL</a></body></html>`)
+		_, _ = fmt.Fprint(w, `<html><body><a class="dl" href="/dl/file.torrent">DL</a></body></html>`)
 	}))
 	defer server.Close()
 
@@ -422,7 +422,7 @@ func TestResolveDownload_BeforeGetPath(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, `<html><body><a class="dl" href="/dl/get.torrent">DL</a></body></html>`)
+		_, _ = fmt.Fprint(w, `<html><body><a class="dl" href="/dl/get.torrent">DL</a></body></html>`)
 	}))
 	defer server.Close()
 
@@ -487,7 +487,7 @@ func TestExtractRelease_WithDownloadResolution(t *testing.T) {
 		switch r.URL.Path {
 		case "/details/99":
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, `<html><body><a class="real-dl" href="/resolved.torrent">DL</a></body></html>`)
+			_, _ = fmt.Fprint(w, `<html><body><a class="real-dl" href="/resolved.torrent">DL</a></body></html>`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

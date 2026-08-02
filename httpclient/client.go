@@ -89,8 +89,8 @@ func New(opts Options) (*IndexerClient, error) {
 // Proxy: ProxyFromEnvironment preserves the default transport's env-var
 // behavior (HTTP(S)_PROXY), which a bare transport would silently drop.
 var tunedTransport = &http.Transport{
-	Proxy:              http.ProxyFromEnvironment,
-	MaxIdleConns:       100,
+	Proxy:               http.ProxyFromEnvironment,
+	MaxIdleConns:        100,
 	MaxIdleConnsPerHost: 10,
 	IdleConnTimeout:     90 * time.Second,
 }
@@ -154,8 +154,8 @@ func (c *IndexerClient) Do(req *http.Request) (*http.Response, error) {
 		}
 		if resp.StatusCode >= 500 {
 			lastErr = fmt.Errorf("http status %d", resp.StatusCode)
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
 			continue
 		}
 		// Persists cookies after each successful exchange (e.g., login that sets a session cookie).

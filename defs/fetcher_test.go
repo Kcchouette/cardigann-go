@@ -51,7 +51,7 @@ func TestFetcher_FetchVersion(t *testing.T) {
 	})
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(tarball)
+		_, _ = w.Write(tarball)
 	}))
 	defer server.Close()
 
@@ -103,7 +103,7 @@ func TestFetcher_FetchAll(t *testing.T) {
 	})
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(tarball)
+		_, _ = w.Write(tarball)
 	}))
 	defer server.Close()
 
@@ -176,7 +176,7 @@ func TestFetcher_ETagRoundtrip(t *testing.T) {
 			return
 		}
 		w.Header().Set("ETag", etag)
-		w.Write(tarball)
+		_, _ = w.Write(tarball)
 	}))
 	defer server.Close()
 

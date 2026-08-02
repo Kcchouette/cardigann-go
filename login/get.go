@@ -49,7 +49,7 @@ func loginGet(ctx context.Context, client *http.Client, def cmodel.IndexerDefini
 	if err != nil {
 		return fmt.Errorf("login request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
@@ -87,7 +87,7 @@ func loginOneURL(ctx context.Context, client *http.Client, def cmodel.IndexerDef
 	if err != nil {
 		return fmt.Errorf("login request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {

@@ -173,7 +173,7 @@ func TestIndexerClient_CookiePersistenceAcrossInstances(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		w.Write([]byte(cookie.Value))
+		_, _ = w.Write([]byte(cookie.Value))
 	}))
 	defer server.Close()
 
@@ -199,7 +199,7 @@ func TestIndexerClient_CookiePersistenceAcrossInstances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second request: %v", err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 (cookie restored), got %d", resp2.StatusCode)
@@ -257,7 +257,7 @@ func TestIndexerClient_RetriesOn5xx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected eventual success, got error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 after retries, got %d", resp.StatusCode)
 	}
@@ -283,7 +283,7 @@ func TestIndexerClient_NoRetryOn4xx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
 	}

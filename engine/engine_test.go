@@ -1146,7 +1146,8 @@ search:
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/login":
-			if r.Method == http.MethodGet {
+			switch r.Method {
+			case http.MethodGet:
 				requestLog = append(requestLog, "GET /login")
 				w.Header().Set("Content-Type", "text/html")
 				_, _ = w.Write([]byte(`<html><body>
@@ -1156,7 +1157,7 @@ search:
   <input type="password" name="password"/>
 </form>
 </body></html>`))
-			} else if r.Method == http.MethodPost {
+			case http.MethodPost:
 				requestLog = append(requestLog, "POST /login")
 				buf := make([]byte, 4096)
 				n, _ := r.Body.Read(buf)
