@@ -41,6 +41,13 @@ type Fetcher struct {
 	// used by tests to point to a local httptest server
 	// instead of the real GitHub.
 	URLOverride string
+
+	// ifNoneMatch is the last ETag seen on a previous download; when set, it
+	// is sent as If-None-Match so an unchanged tarball answers 304 without
+	// re-downloading it. lastETag/notModified are populated by each fetch.
+	ifNoneMatch string
+	lastETag    string
+	notModified bool
 }
 
 // NewFetcher constructs a Fetcher with the real repository defaults.
@@ -51,6 +58,17 @@ func NewFetcher() *Fetcher {
 		Ref:        "master",
 	}
 }
+
+// SetIfNoneMatch configures the If-None-Match header for the next fetch
+// (the ETag previously returned by LastETag, persisted by the caller).
+func (f *Fetcher) SetIfNoneMatch(etag string) { f.ifNoneMatch = etag }
+
+// LastETag returns the ETag header of the last completed fetch ("" if none).
+func (f *Fetcher) LastETag() string { return f.lastETag }
+
+// NotModified reports whether the last fetch answered 304 Not Modified
+// (the tarball is unchanged; no results were produced).
+func (f *Fetcher) NotModified() bool { return f.notModified }
 
 func (f *Fetcher) tarballURL() string {
 	if f.URLOverride != "" {
@@ -66,6 +84,9 @@ func (f *Fetcher) FetchVersion(ctx context.Context, version string) ([]RawDefini
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
 	}
+	if f.ifNoneMatch != "" {
+		req.Header.Set("If-None-Match", f.ifNoneMatch)
+	}
 
 	resp, err := f.HTTPClient.Do(req)
 	if err != nil {
@@ -73,6 +94,11 @@ func (f *Fetcher) FetchVersion(ctx context.Context, version string) ([]RawDefini
 	}
 	defer resp.Body.Close()
 
+	f.lastETag = resp.Header.Get("ETag")
+	if resp.StatusCode == http.StatusNotModified {
+		f.notModified = true
+		return nil, nil // unchanged tarball, nothing to re-extract
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected http status %d while downloading tarball", resp.StatusCode)
 	}
@@ -145,6 +171,9 @@ func (f *Fetcher) FetchAll(ctx context.Context) ([]RawDefinition, error) {
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
 	}
+	if f.ifNoneMatch != "" {
+		req.Header.Set("If-None-Match", f.ifNoneMatch)
+	}
 
 	resp, err := f.HTTPClient.Do(req)
 	if err != nil {
@@ -152,6 +181,11 @@ func (f *Fetcher) FetchAll(ctx context.Context) ([]RawDefinition, error) {
 	}
 	defer resp.Body.Close()
 
+	f.lastETag = resp.Header.Get("ETag")
+	if resp.StatusCode == http.StatusNotModified {
+		f.notModified = true
+		return nil, nil // unchanged tarball, nothing to re-extract
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected http status %d while downloading tarball", resp.StatusCode)
 	}

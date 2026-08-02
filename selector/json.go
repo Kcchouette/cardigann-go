@@ -16,17 +16,21 @@ func NewJSONDocument(json string) (Document, error) {
 	if !gjson.Valid(json) {
 		return nil, fmt.Errorf("invalid json document")
 	}
-	return &jsonDocument{raw: json}, nil
+	// Parse once and keep the Result: gjson.Get operates on Result.Raw, so
+	// Find("$") and Find(path) reuse this single parse instead of re-scanning
+	// the whole document (gjson.Valid above is the second full pass, the last
+	// one per document).
+	return &jsonDocument{parsed: gjson.Parse(json)}, nil
 }
 
 type jsonDocument struct {
-	raw string
+	parsed gjson.Result
 }
 
 func (d *jsonDocument) Find(path string) ([]Node, error) {
 	// Special case: "$" means "all elements of the root array"
 	if path == "$" {
-		result := gjson.Parse(d.raw)
+		result := d.parsed
 		if result.Exists() && result.IsArray() {
 			nodes := make([]Node, 0)
 			result.ForEach(func(_, value gjson.Result) bool {
@@ -39,7 +43,7 @@ func (d *jsonDocument) Find(path string) ([]Node, error) {
 		return []Node{&jsonNode{result: result}}, nil
 	}
 
-	result := gjson.Get(d.raw, path)
+	result := d.parsed.Get(path)
 	if !result.Exists() {
 		return nil, nil
 	}

@@ -161,3 +161,67 @@ func keysBy(m map[string]RawDefinition) []string {
 	}
 	return out
 }
+
+func TestFetcher_ETagRoundtrip(t *testing.T) {
+	tarball := buildFixtureTarball(t, map[string]string{
+		"Indexers-abc123/definitions/v11/testtracker.yml": "id: testtracker\nname: TestTracker\n",
+	})
+
+	const etag = `"abc123-def"`
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", etag)
+		w.Write(tarball)
+	}))
+	defer server.Close()
+
+	f := NewFetcher()
+	f.URLOverride = server.URL
+
+	// First fetch: 200 + ETag captured.
+	results, err := f.FetchAll(context.Background())
+	if err != nil {
+		t.Fatalf("first FetchAll: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 definition, got %d", len(results))
+	}
+	if f.LastETag() != etag {
+		t.Errorf("expected LastETag %q, got %q", etag, f.LastETag())
+	}
+	if f.NotModified() {
+		t.Error("expected NotModified()==false after a full fetch")
+	}
+
+	// Second fetch with the stored ETag: 304, no results, NotModified.
+	f.SetIfNoneMatch(f.LastETag())
+	results, err = f.FetchAll(context.Background())
+	if err != nil {
+		t.Fatalf("second FetchAll: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results on 304, got %d", len(results))
+	}
+	if !f.NotModified() {
+		t.Error("expected NotModified()==true after 304")
+	}
+
+	// FetchVersion honors the same ETag.
+	f.SetIfNoneMatch(etag)
+	results, err = f.FetchVersion(context.Background(), "v11")
+	if err != nil {
+		t.Fatalf("FetchVersion after ETag: %v", err)
+	}
+	if len(results) != 0 || !f.NotModified() {
+		t.Errorf("FetchVersion: expected 304 (0 results), got %d results, NotModified=%v", len(results), f.NotModified())
+	}
+
+	if requests != 3 {
+		t.Errorf("expected 3 requests total, got %d", requests)
+	}
+}

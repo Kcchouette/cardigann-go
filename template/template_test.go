@@ -97,8 +97,9 @@ func TestRender_CachedTemplateConcurrent(t *testing.T) {
 	}
 }
 
-func TestRender_InvalidTemplateNotCached(t *testing.T) {
-	// An invalid template fails on every call (no error cache).
+func TestRender_InvalidTemplatePersistent(t *testing.T) {
+	// An invalid template fails on every call; the parse failure is cached
+	// (negative cache) but the error is still returned each time.
 	for i := 0; i < 3; i++ {
 		if _, err := Render(`{{ .Unclosed`, Context{}); err == nil {
 			t.Fatalf("call %d: expected parse error", i)

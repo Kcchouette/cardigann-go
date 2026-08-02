@@ -83,9 +83,21 @@ func New(opts Options) (*IndexerClient, error) {
 	}, nil
 }
 
+// tunedTransport is the shared transport for the no-proxy path and the base
+// for proxy paths: it keeps idle connections alive and pools them across
+// requests instead of relying on http.DefaultTransport's tight per-host limit.
+// Proxy: ProxyFromEnvironment preserves the default transport's env-var
+// behavior (HTTP(S)_PROXY), which a bare transport would silently drop.
+var tunedTransport = &http.Transport{
+	Proxy:              http.ProxyFromEnvironment,
+	MaxIdleConns:       100,
+	MaxIdleConnsPerHost: 10,
+	IdleConnTimeout:     90 * time.Second,
+}
+
 func buildTransport(proxyURL string) (http.RoundTripper, error) {
 	if proxyURL == "" {
-		return http.DefaultTransport, nil
+		return tunedTransport, nil
 	}
 	u, err := url.Parse(proxyURL)
 	if err != nil {
@@ -94,7 +106,9 @@ func buildTransport(proxyURL string) (http.RoundTripper, error) {
 
 	switch u.Scheme {
 	case "http", "https":
-		return &http.Transport{Proxy: http.ProxyURL(u)}, nil
+		tr := tunedTransport.Clone()
+		tr.Proxy = http.ProxyURL(u)
+		return tr, nil
 	case "socks5":
 		// Documented limitation (see architecture review): golang.org/x/net/proxy only
 		// supports SOCKS5, not SOCKS4 — a configured SOCKS4 proxy will fail here.
@@ -102,11 +116,11 @@ func buildTransport(proxyURL string) (http.RoundTripper, error) {
 		if err != nil {
 			return nil, fmt.Errorf("building socks5 dialer: %w", err)
 		}
-		return &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return dialer.Dial(network, addr)
-			},
-		}, nil
+		tr := tunedTransport.Clone()
+		tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.Dial(network, addr)
+		}
+		return tr, nil
 	default:
 		return nil, fmt.Errorf("unsupported proxy scheme %q (only http/https/socks5)", u.Scheme)
 	}
