@@ -64,6 +64,24 @@ func TestCheckErrors_MatchMessageSelector(t *testing.T) {
 	}
 }
 
+func TestCheckErrors_MessageTextTemplate(t *testing.T) {
+	body := `<html><body>
+		<div class="error-box">Something went wrong</div>
+	</body></html>`
+	// message.text takes precedence over the matched node text and is
+	// rendered as a template with the provided context.
+	err := CheckErrors(body, []cmodel.ErrorSelector{
+		{Selector: ".error-box", Message: cmodel.MessageSelector{Text: "2FA required for {{ .Config.user }}"}},
+	}, tmpl.Context{Config: map[string]string{"user": "alice"}})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	want := "2FA required for alice"
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
 func TestCheckErrors_MultipleSelectors_SecondMatches(t *testing.T) {
 	body := `<html><body>
 		<div class="notice">Welcome</div>

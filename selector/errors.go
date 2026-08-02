@@ -24,11 +24,17 @@ func CheckErrors(body string, selectors []cmodel.ErrorSelector, rctx tmpl.Contex
 			continue
 		}
 		msg := "error detected"
-		if es.Message.Selector != "" {
+		switch {
+		case es.Message.Text != "":
+			// message.text is a literal or template; render it with the context.
+			if rendered, err := tmpl.Render(es.Message.Text, rctx); err == nil {
+				msg = rendered
+			}
+		case es.Message.Selector != "":
 			if msgNodes, err := doc.Find(es.Message.Selector); err == nil && len(msgNodes) > 0 {
 				msg = msgNodes[0].Text()
 			}
-		} else {
+		default:
 			msg = nodes[0].Text()
 		}
 		return fmt.Errorf("%s", msg)

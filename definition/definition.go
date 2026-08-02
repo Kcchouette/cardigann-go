@@ -168,6 +168,7 @@ type ErrorSelector struct {
 // MessageSelector describes how to extract the associated error message.
 type MessageSelector struct {
 	Selector string `yaml:"selector"`
+	Text     string `yaml:"text,omitempty"` // literal/template message, takes precedence over selector
 }
 
 // Test describes a way to verify that a session is valid (post-login).
