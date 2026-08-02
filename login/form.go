@@ -212,9 +212,9 @@ func extractSelectorInputs(ctx context.Context, client *http.Client, def cmodel.
 			raw = sel.Text
 		}
 		if len(sel.Filters) > 0 {
-			steps := make([]filters.Step, len(sel.Filters))
-			for i, f := range sel.Filters {
-				steps[i] = filters.Step{Name: f.Name, Args: f.Args}
+			steps, rerr := tmpl.RenderFilterSteps(sel.Filters, rctx)
+			if rerr != nil {
+				continue
 			}
 			raw, err = filters.Apply(raw, steps)
 			if err != nil {

@@ -1776,3 +1776,122 @@ search:
 		t.Errorf("size = %d, want 4242 (rendered config default)", releases[0].Size)
 	}
 }
+
+// TestSearch_FilterArgsRendered covers filter args rendered as templates:
+// a field filter arg referencing .Result.year must resolve on a later pass.
+func TestSearch_FilterArgsRendered(t *testing.T) {
+	yamlDef := `
+id: filterargs
+name: FilterArgs
+description: filter arg rendering test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    year:
+      selector: span.year
+    title:
+      selector: a.title
+      filters:
+        - name: append
+          args: "-{{ .Result.year }}"
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	htmlBody := `<table class="results"><tr>
+	  <td><span class="year">2026</span><a class="title">Foo</a><a class="dl" href="/dl/1"></a></td>
+	</tr></table>`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(htmlBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+	want := "Foo-2026"
+	if releases[0].Title != want {
+		t.Errorf("title = %q, want %q (resolved .Result.year filter arg)", releases[0].Title, want)
+	}
+}
+
+// TestSearch_KeywordsFilterArgs covers keywordsfilters args rendered with the
+// config context (they run after configOnce now, not before).
+func TestSearch_KeywordsFilterArgs(t *testing.T) {
+	yamlDef := `
+id: kwargs
+name: KWArgs
+description: keywords filter arg rendering test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+settings:
+  - name: suffix
+    type: text
+    label: Suffix
+    default: "suffix"
+search:
+  keywordsfilters:
+    - name: append
+      args: "-{{ .Config.suffix }}"
+  paths:
+    - path: /search
+      inputs:
+        q: "{{ .Keywords }}"
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("q")
+		_, _ = w.Write([]byte(`<table class="results"><tr><td><a class="title">Item</a><a class="dl" href="/dl/1"></a></td></tr></table>`))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+	want := "test-suffix"
+	if gotQuery != want {
+		t.Errorf("keywordsfilters arg rendered q = %q, want %q", gotQuery, want)
+	}
+}

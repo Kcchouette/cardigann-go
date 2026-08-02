@@ -5,6 +5,7 @@ package template
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -12,8 +13,37 @@ import (
 	"text/template"
 	"time"
 
+	cmodel "github.com/Kcchouette/cardigann-go/definition"
 	"github.com/Kcchouette/cardigann-go/template/filters"
 )
+
+// ErrUnresolved marks a rendered template that still contains unresolved
+// placeholders (a missing value rendered as `<no value>` or a raw `{{`).
+// Callers defer to a later extraction pass instead of failing hard.
+var ErrUnresolved = errors.New("unresolved template")
+
+// RenderFilterSteps renders every filter argument as a template with the
+// given context, returning the ready-to-run filter steps. Corpus filter args
+// frequently reference .Result / .Config (e.g. `args: "-{{ .Result.year }}"`).
+func RenderFilterSteps(steps []cmodel.FilterStep, rctx Context) ([]filters.Step, error) {
+	out := make([]filters.Step, len(steps))
+	for i, s := range steps {
+		args := make([]string, len(s.Args))
+		for j, a := range s.Args {
+			if !strings.Contains(a, "{{") {
+				args[j] = a
+				continue
+			}
+			rendered, err := Render(a, rctx)
+			if err != nil || strings.Contains(rendered, "<no value>") || strings.Contains(rendered, "{{") {
+				return nil, ErrUnresolved
+			}
+			args[j] = rendered
+		}
+		out[i] = filters.Step{Name: s.Name, Args: args}
+	}
+	return out, nil
+}
 
 // Context is the rendering context exposed to Cardigann templates.
 type Context struct {

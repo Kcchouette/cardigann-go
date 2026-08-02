@@ -64,7 +64,12 @@ func (p *Provider) parseResults(ctx context.Context, body string, responseType s
 					}
 					continue
 				}
-				result, err := filters.Apply(text, []filters.Step{{Name: f.Name, Args: f.Args}})
+				steps, rerr := tmpl.RenderFilterSteps([]cmodel.FilterStep{{Name: f.Name, Args: f.Args}}, rctx)
+				if rerr != nil {
+					passed = false
+					break
+				}
+				result, err := filters.Apply(text, steps)
 				if err != nil || result == "" {
 					passed = false
 					break
@@ -225,7 +230,20 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 				continue
 			}
 
-			filtered, err := filters.Apply(raw, toFilterSteps(field.Filters))
+			steps, rerr := tmpl.RenderFilterSteps(field.Filters, rctx)
+			if rerr != nil {
+				if field.Optional {
+					if v, okD := fieldDefault(field, rctx); okD {
+						values[name] = v
+						rctx.Result[name] = v
+						progress = true
+					}
+					continue
+				}
+				// Filter (or its unresolved args) failed, keep for next pass
+				continue
+			}
+			filtered, err := filters.Apply(raw, steps)
 			if err != nil {
 				if field.Optional {
 					if v, okD := fieldDefault(field, rctx); okD {

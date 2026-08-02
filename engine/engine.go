@@ -154,18 +154,6 @@ func (p *Provider) httpClient(ctx context.Context) (HTTPDoer, error) {
 // state is modified after the first search (default config values are applied
 // only once via configOnce, and filtered keywords remain local to the call).
 func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, error) {
-	keywords := q.Keywords
-	for _, step := range p.def.Search.KeywordsFilters {
-		var err error
-		keywords, err = filters.Apply(keywords, []filters.Step{{Name: step.Name, Args: step.Args}})
-		if err != nil {
-			return nil, fmt.Errorf("keywordsfilters: %w", err)
-		}
-	}
-
-	// Map Newznab category IDs to native tracker category IDs.
-	mappedCategories := mapCategories(q.Categories, p.def.Caps)
-
 	// Populate config with default values from definition if not already set
 	// Note: "false" is truthy in Go templates, so we exclude it from Config
 	// so that {{ if .Config.freeleech }} works correctly.
@@ -182,13 +170,14 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 		}
 	})
 
+	// The render context must exist before the keyword filters run: their
+	// args reference .Config (e.g. torrentleech's exclude_archives).
 	rctx := tmpl.Context{
-		Config:     p.config,
-		Keywords:   keywords,
-		Categories: mappedCategories,
+		Config:   p.config,
+		Keywords: q.Keywords,
 		Query: map[string]string{
-			"Keywords":    keywords,
-			"q":           keywords,
+			"Keywords":    q.Keywords,
+			"q":           q.Keywords,
 			"IMDBID":      q.IMDBID,
 			"IMDBIDShort": q.IMDBIDShort,
 			"TMDBID":      q.TMDBID,
@@ -200,6 +189,25 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 			"Genre":       q.Genre,
 		},
 	}
+
+	keywords := q.Keywords
+	for _, step := range p.def.Search.KeywordsFilters {
+		steps, err := tmpl.RenderFilterSteps([]cmodel.FilterStep{step}, rctx)
+		if err != nil {
+			return nil, fmt.Errorf("keywordsfilters: %w", err)
+		}
+		keywords, err = filters.Apply(keywords, steps)
+		if err != nil {
+			return nil, fmt.Errorf("keywordsfilters: %w", err)
+		}
+	}
+	rctx.Keywords = keywords
+	rctx.Query["Keywords"] = keywords
+	rctx.Query["q"] = keywords
+
+	// Map Newznab category IDs to native tracker category IDs.
+	mappedCategories := mapCategories(q.Categories, p.def.Caps)
+	rctx.Categories = mappedCategories
 	if len(mappedCategories) > 0 {
 		rctx.Query["categories"] = strings.Join(mappedCategories, ",")
 	}
