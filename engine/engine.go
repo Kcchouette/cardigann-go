@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -163,7 +164,7 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 	}
 
 	// Map Newznab category IDs to native tracker category IDs.
-	mappedCategories := mapCategories(q.Categories, p.def.Caps.CategoryMappings)
+	mappedCategories := mapCategories(q.Categories, p.def.Caps)
 
 	// Populate config with default values from definition if not already set
 	// Note: "false" is truthy in Go templates, so we exclude it from Config
@@ -219,10 +220,14 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 }
 
 // mapCategories converts Newznab category IDs to native tracker category IDs
-// using the definition's category mappings.
-func mapCategories(newznabIDs []int, mappings []cmodel.CategoryMapping) []string {
-	if len(newznabIDs) == 0 || len(mappings) == 0 {
+// using the definition's category mappings, falling back to caps.categories
+// (native -> newznab representation) when no mappings are declared.
+func mapCategories(newznabIDs []int, caps cmodel.Caps) []string {
+	if len(newznabIDs) == 0 {
 		return nil
+	}
+	if len(caps.CategoryMappings) == 0 {
+		return mapCategoriesFromMap(newznabIDs, caps.Categories)
 	}
 	// Build a set of Newznab IDs for fast lookup.
 	nzSet := make(map[int]struct{}, len(newznabIDs))
@@ -230,7 +235,7 @@ func mapCategories(newznabIDs []int, mappings []cmodel.CategoryMapping) []string
 		nzSet[id] = struct{}{}
 	}
 	var result []string
-	for _, m := range mappings {
+	for _, m := range caps.CategoryMappings {
 		catNum := 0
 		for _, r := range m.Cat {
 			if r >= '0' && r <= '9' {
@@ -245,6 +250,26 @@ func mapCategories(newznabIDs []int, mappings []cmodel.CategoryMapping) []string
 		}
 		if _, ok := nzSet[catNum]; ok {
 			result = append(result, m.ID)
+		}
+	}
+	return result
+}
+
+// mapCategoriesFromMap converts via caps.categories (native key -> newznab
+// representation). Only numeric newznab representations can be matched
+// against the requested numeric IDs; name-based values (e.g. {1: TV}) are
+// left unmatched without a name->ID table (known limitation).
+func mapCategoriesFromMap(newznabIDs []int, categories cmodel.StringMap) []string {
+	nzSet := make(map[string]struct{}, len(newznabIDs))
+	for _, id := range newznabIDs {
+		nzSet[strconv.Itoa(id)] = struct{}{}
+	}
+	var result []string
+	for _, key := range categories.Keys() {
+		if v, ok := categories.Lookup(key); ok {
+			if _, hit := nzSet[v]; hit {
+				result = append(result, key)
+			}
 		}
 	}
 	return result

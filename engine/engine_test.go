@@ -144,7 +144,7 @@ func TestMapCategories(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := mapCategories(tt.input, mappings)
+			result := mapCategories(tt.input, cmodel.Caps{CategoryMappings: mappings})
 			if len(result) != len(tt.expected) {
 				t.Fatalf("expected %d results, got %d: %v", len(tt.expected), len(result), result)
 			}
@@ -158,9 +158,23 @@ func TestMapCategories(t *testing.T) {
 }
 
 func TestMapCategories_EmptyMappings(t *testing.T) {
-	result := mapCategories([]int{2000}, nil)
+	result := mapCategories([]int{2000}, cmodel.Caps{})
 	if result != nil {
 		t.Errorf("expected nil, got %v", result)
+	}
+}
+
+// TestMapCategories_FromMap covers the caps.categories fallback: native key
+// -> newznab representation, matched against the requested numeric IDs.
+func TestMapCategories_FromMap(t *testing.T) {
+	caps := cmodel.Caps{Categories: cmodel.StringMapFrom("2000", "2000", "1", "TV", "XXX", "XXX")}
+	result := mapCategories([]int{2000}, caps)
+	if len(result) != 1 || result[0] != "2000" {
+		t.Errorf("expected [2000], got %v", result)
+	}
+	// Name-based representations cannot be matched without a name table.
+	if result := mapCategories([]int{2000}, cmodel.Caps{Categories: cmodel.StringMapFrom("1", "TV")}); result != nil {
+		t.Errorf("expected no match for name-based values, got %v", result)
 	}
 }
 

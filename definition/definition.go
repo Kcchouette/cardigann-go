@@ -122,6 +122,7 @@ func (d IndexerDefinition) Validate() []string {
 // Caps describes the search/category capabilities of the indexer.
 type Caps struct {
 	CategoryMappings []CategoryMapping   `yaml:"categorymappings"`
+	Categories       StringMap           `yaml:"categories,omitempty"` // native -> newznab representation
 	Modes            map[string][]string `yaml:"modes"`
 	AllowRawSearch   bool                `yaml:"allowrawsearch"`
 }
@@ -136,10 +137,11 @@ type CategoryMapping struct {
 
 // Setting describes a configuration field exposed to the user (credentials, options, etc.).
 type Setting struct {
-	Name    string `yaml:"name"`
-	Type    string `yaml:"type"` // text | password | checkbox | select | info | ...
-	Label   string `yaml:"label"`
-	Default string `yaml:"default"`
+	Name    string    `yaml:"name"`
+	Type    string    `yaml:"type"` // text | password | checkbox | select | info | ...
+	Label   string    `yaml:"label"`
+	Default string    `yaml:"default"`
+	Options StringMap `yaml:"options,omitempty"` // select choices (display -> value)
 }
 
 // Login describes the authentication mechanism of the indexer.
@@ -273,6 +275,17 @@ func (sm StringMap) Lookup(key string) (string, bool) {
 
 // Len returns the number of entries.
 func (sm StringMap) Len() int { return len(sm.entries) }
+
+// StringMapFrom builds a StringMap from alternating key/value pairs
+// (programmatic construction; YAML definitions use the custom unmarshal).
+func StringMapFrom(pairs ...string) StringMap {
+	sm := StringMap{m: make(map[string]string, len(pairs)/2)}
+	for i := 0; i+1 < len(pairs); i += 2 {
+		sm.entries = append(sm.entries, stringMapEntry{key: pairs[i], value: pairs[i+1]})
+		sm.m[pairs[i]] = pairs[i+1]
+	}
+	return sm
+}
 
 // FilterStep represents a step in the post-extraction filter pipeline
 // (e.g. `re_replace`, `split`, `dateparse`...), with its positional arguments.

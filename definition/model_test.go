@@ -331,3 +331,88 @@ search:
 		t.Errorf("path input q = %q, want %q", def.Search.Paths[0].Inputs["q"], "{{ .Keywords }}")
 	}
 }
+
+func TestSettingsOptions(t *testing.T) {
+	yaml := `
+id: opts
+name: Opts
+type: public
+caps:
+  modes:
+    search: [q]
+settings:
+  - name: sort
+    type: select
+    default: desc
+    options:
+      desc: Descending
+      asc: Ascending
+      1: "Numeric key"
+search:
+  paths:
+    - path: /s
+  rows:
+    selector: x
+  fields:
+    title:
+      selector: y
+`
+	def, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(def.Settings) != 1 {
+		t.Fatalf("expected 1 setting, got %d", len(def.Settings))
+	}
+	opts := def.Settings[0].Options
+	if opts.Len() != 3 {
+		t.Fatalf("expected 3 options, got %d", opts.Len())
+	}
+	if got := opts.Value("desc"); got != "Descending" {
+		t.Errorf("options.desc = %q, want Descending", got)
+	}
+	if got := opts.Value("1"); got != "Numeric key" {
+		t.Errorf("numeric option key = %q, want 'Numeric key'", got)
+	}
+	keys := opts.Keys()
+	if len(keys) != 3 || keys[0] != "desc" || keys[1] != "asc" || keys[2] != "1" {
+		t.Errorf("document order not preserved: %v", keys)
+	}
+}
+
+func TestCapsCategories(t *testing.T) {
+	yaml := `
+id: cats
+name: Cats
+type: public
+caps:
+  categories:
+    XXX: XXX
+    1: TV
+  modes:
+    search: [q]
+search:
+  paths:
+    - path: /s
+  rows:
+    selector: x
+  fields:
+    title:
+      selector: y
+`
+	def, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cats := def.Caps.Categories
+	if cats.Len() != 2 {
+		t.Fatalf("expected 2 categories, got %d", cats.Len())
+	}
+	if got := cats.Value("1"); got != "TV" {
+		t.Errorf("categories.1 = %q, want TV", got)
+	}
+	keys := cats.Keys()
+	if len(keys) != 2 || keys[0] != "XXX" || keys[1] != "1" {
+		t.Errorf("document order not preserved: %v", keys)
+	}
+}

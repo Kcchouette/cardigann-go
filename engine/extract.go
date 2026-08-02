@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -134,7 +135,13 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 
 	for pass := 0; pass < 10; pass++ { // Max 10 passes
 		progress := false
-		for name, field := range p.def.Search.Fields {
+		// Iterate fields in sorted name order: Go map iteration is random,
+		// and a `text:` field referencing a helper (e.g. `{{ if .Result._internal }}`)
+		// would render its falsy branch successfully before the helper is
+		// extracted, never re-rendering afterwards. The v11 schema mandates
+		// `_`-prefixed helper fields, which sort before their dependents.
+		for _, name := range sortedFieldNames(p.def.Search.Fields) {
+			field := p.def.Search.Fields[name]
 			// Skip if field is already extracted
 			if _, done := values[name]; done {
 				continue
@@ -317,6 +324,16 @@ func toFilterSteps(steps []cmodel.FilterStep) []filters.Step {
 		out[i] = filters.Step{Name: s.Name, Args: s.Args}
 	}
 	return out
+}
+
+// sortedFieldNames returns the field names in deterministic (byte) order.
+func sortedFieldNames(fields map[string]cmodel.Field) []string {
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // splitRemoveSelectors splits a comma-separated `remove` value into trimmed
