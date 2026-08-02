@@ -213,8 +213,8 @@ type Field struct {
 	Text      string       `yaml:"text"` // literal/template value instead of a selector
 	Optional  bool         `yaml:"optional"`
 	Filters   []FilterStep `yaml:"filters"`
-	Case      StringMap    `yaml:"case,omitempty"`  // value mapping (CSS selectors for HTML rows, literal keys for JSON)
-	Remove    string       `yaml:"remove,omitempty"` // comma-separated selectors stripped from the text
+	Case      StringMap    `yaml:"case,omitempty"`    // value mapping (CSS selectors for HTML rows, literal keys for JSON)
+	Remove    string       `yaml:"remove,omitempty"`  // comma-separated selectors stripped from the text
 	Default   string       `yaml:"default,omitempty"` // fallback when extraction yields nothing
 }
 
