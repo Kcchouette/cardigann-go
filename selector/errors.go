@@ -4,11 +4,13 @@ import (
 	"fmt"
 
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
+	tmpl "github.com/Kcchouette/cardigann-go/template"
 )
 
 // CheckErrors inspects an HTML body against a list of error selectors.
 // If any selector matches, it returns an error with the extracted message.
-func CheckErrors(body string, selectors []cmodel.ErrorSelector) error {
+// rctx is threaded through for template-rendered error messages (message.text).
+func CheckErrors(body string, selectors []cmodel.ErrorSelector, rctx tmpl.Context) error {
 	if len(selectors) == 0 {
 		return nil
 	}

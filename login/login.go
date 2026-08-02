@@ -41,6 +41,8 @@ func Login(ctx context.Context, client *http.Client, def cmodel.IndexerDefinitio
 		return loginCookie(client, baseURL, config)
 	case "form":
 		return loginForm(ctx, client, def, baseURL, config)
+	case "post":
+		return loginPost(ctx, client, def, baseURL, config)
 	case "get":
 		return loginGet(ctx, client, def, baseURL, config)
 	case "oneurl":

@@ -5,10 +5,11 @@ import (
 	"testing"
 
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
+	tmpl "github.com/Kcchouette/cardigann-go/template"
 )
 
 func TestCheckErrors_NoSelectors(t *testing.T) {
-	err := CheckErrors("<html><body>ok</body></html>", nil)
+	err := CheckErrors("<html><body>ok</body></html>", nil, tmpl.Context{})
 	if err != nil {
 		t.Errorf("expected nil error, got %v", err)
 	}
@@ -17,7 +18,7 @@ func TestCheckErrors_NoSelectors(t *testing.T) {
 func TestCheckErrors_NonHTMLBody(t *testing.T) {
 	err := CheckErrors(`{"error":"something"}`, []cmodel.ErrorSelector{
 		{Selector: ".error"},
-	})
+	}, tmpl.Context{})
 	if err != nil {
 		t.Errorf("expected nil for non-HTML body, got %v", err)
 	}
@@ -27,7 +28,7 @@ func TestCheckErrors_NoMatch(t *testing.T) {
 	body := `<html><body><div class="content">All good</div></body></html>`
 	err := CheckErrors(body, []cmodel.ErrorSelector{
 		{Selector: ".error-box"},
-	})
+	}, tmpl.Context{})
 	if err != nil {
 		t.Errorf("expected nil when selector doesn't match, got %v", err)
 	}
@@ -37,7 +38,7 @@ func TestCheckErrors_MatchDefaultMessage(t *testing.T) {
 	body := `<html><body><div class="error-box">Your account is banned</div></body></html>`
 	err := CheckErrors(body, []cmodel.ErrorSelector{
 		{Selector: ".error-box"},
-	})
+	}, tmpl.Context{})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -54,7 +55,7 @@ func TestCheckErrors_MatchMessageSelector(t *testing.T) {
 	</body></html>`
 	err := CheckErrors(body, []cmodel.ErrorSelector{
 		{Selector: ".error-box", Message: cmodel.MessageSelector{Selector: ".msg"}},
-	})
+	}, tmpl.Context{})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -71,7 +72,7 @@ func TestCheckErrors_MultipleSelectors_SecondMatches(t *testing.T) {
 	err := CheckErrors(body, []cmodel.ErrorSelector{
 		{Selector: ".notice"},
 		{Selector: ".error-box"},
-	})
+	}, tmpl.Context{})
 	// .notice is not an error selector that returns a match error — the first one
 	// should be skipped if it doesn't match, or if it does match, it returns error.
 	// Since .notice matches, it returns error with "Welcome".
@@ -86,7 +87,7 @@ func TestCheckErrors_MultipleSelectors_SecondMatches(t *testing.T) {
 func TestCheckErrors_EmptyBody(t *testing.T) {
 	err := CheckErrors("", []cmodel.ErrorSelector{
 		{Selector: ".error"},
-	})
+	}, tmpl.Context{})
 	if err != nil {
 		t.Errorf("expected nil for empty body, got %v", err)
 	}

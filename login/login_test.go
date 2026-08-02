@@ -657,6 +657,87 @@ func TestLogin_GetWithStaticCookies(t *testing.T) {
 	}
 }
 
+// TestLogin_PostMethod covers login.method: post — inputs are POSTed straight
+// to the login path, with no login-page GET and no selector-input extraction.
+func TestLogin_PostMethod(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/login" && r.Method == http.MethodPost {
+			_ = r.ParseForm()
+			if r.FormValue("username") == "alice" && r.FormValue("password") == "secret" {
+				http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
+				_, _ = w.Write([]byte(`<html><body>OK</body></html>`))
+				return
+			}
+			_, _ = w.Write([]byte(`<html><body><div class="error">Invalid credentials</div></body></html>`))
+			return
+		}
+		if r.URL.Path == "/profile" {
+			_, _ = w.Write([]byte(`<html><body><div class="logged-in">ok</div></body></html>`))
+			return
+		}
+		_, _ = w.Write([]byte(`<html><body><div class="error">unexpected request: %s</div></body></html>`))
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method: "post",
+			Path:   "/login",
+			Inputs: map[string]string{
+				"username": "{{ .Config.username }}",
+				"password": "{{ .Config.password }}",
+			},
+			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
+			Test:  &cmodel.Test{Path: "/profile", Selector: "div.logged-in"},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{
+		"username": "alice",
+		"password": "secret",
+	})
+	if err != nil {
+		t.Fatalf("expected successful post login, got error: %v", err)
+	}
+}
+
+func TestLogin_PostMethodWrongCredentials(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/login" && r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`<html><body><div class="error">Invalid credentials</div></body></html>`))
+			return
+		}
+		_, _ = w.Write([]byte(`<html><body>ok</body></html>`))
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method: "post",
+			Path:   "/login",
+			Inputs: map[string]string{
+				"username": "bob",
+				"password": "wrong",
+			},
+			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{})
+	if err == nil {
+		t.Fatal("expected login error for post method with wrong credentials")
+	}
+	if _, ok := err.(*ErrLoginFailed); !ok {
+		t.Errorf("expected *ErrLoginFailed, got %T: %v", err, err)
+	}
+}
+
 func TestLogin_FormWithSubmitPath(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

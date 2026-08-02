@@ -9,12 +9,14 @@ import (
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
 	"github.com/Kcchouette/cardigann-go/internal/httputil"
 	"github.com/Kcchouette/cardigann-go/selector"
+	tmpl "github.com/Kcchouette/cardigann-go/template"
 )
 
 // checkLoginErrors inspects the login response body for `login.error`
 // selectors: their presence signals an authentication failure.
-func checkLoginErrors(body string, errorSelectors []cmodel.ErrorSelector) error {
-	err := selector.CheckErrors(body, errorSelectors)
+// rctx is threaded through for template-rendered error messages (message.text).
+func checkLoginErrors(body string, errorSelectors []cmodel.ErrorSelector, rctx tmpl.Context) error {
+	err := selector.CheckErrors(body, errorSelectors, rctx)
 	if err != nil {
 		return &ErrLoginFailed{Reason: err.Error()}
 	}

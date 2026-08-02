@@ -58,7 +58,7 @@ func loginGet(ctx context.Context, client *http.Client, def cmodel.IndexerDefini
 		return fmt.Errorf("reading login response: %w", err)
 	}
 
-	if err := checkLoginErrors(string(body), def.Login.Error); err != nil {
+	if err := checkLoginErrors(string(body), def.Login.Error, rctx); err != nil {
 		return err
 	}
 
@@ -101,7 +101,7 @@ func loginOneURL(ctx context.Context, client *http.Client, def cmodel.IndexerDef
 		return fmt.Errorf("reading login response: %w", err)
 	}
 
-	if err := checkLoginErrors(string(body), def.Login.Error); err != nil {
+	if err := checkLoginErrors(string(body), def.Login.Error, rctx); err != nil {
 		return err
 	}
 

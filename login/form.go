@@ -59,6 +59,43 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 		values.Set(k, v)
 	}
 
+	return doLoginRequest(ctx, client, def, baseURL, rctx, loginURL, values)
+}
+
+// loginPost performs a login via a plain POST of the declared inputs to the
+// login path, without fetching the login page first (no selectorinputs, no
+// form selector). Used by login.method: post.
+func loginPost(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
+	rctx := tmpl.Context{Config: config}
+
+	loginPath, err := tmpl.Render(def.Login.Path, rctx)
+	if err != nil {
+		return fmt.Errorf("rendering login path: %w", err)
+	}
+	if def.Login.SubmitPath != "" {
+		loginPath, err = tmpl.Render(def.Login.SubmitPath, rctx)
+		if err != nil {
+			return fmt.Errorf("rendering submit path: %w", err)
+		}
+	}
+	loginURL := httputil.ResolveURL(baseURL, loginPath)
+
+	values := url.Values{}
+	for name, valueTmpl := range def.Login.Inputs {
+		rendered, err := tmpl.Render(valueTmpl, rctx)
+		if err != nil {
+			return fmt.Errorf("rendering login input %q: %w", name, err)
+		}
+		values.Set(name, rendered)
+	}
+
+	return doLoginRequest(ctx, client, def, baseURL, rctx, loginURL, values)
+}
+
+// doLoginRequest sends the rendered login values as an application/x-www-form-urlencoded
+// POST to loginURL (with the definition headers), then verifies the response via
+// login.error and login.test. Shared by the form and post login methods.
+func doLoginRequest(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, rctx tmpl.Context, loginURL string, values url.Values) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(values.Encode()))
 	if err != nil {
 		return fmt.Errorf("building login request: %w", err)
@@ -81,7 +118,7 @@ func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefin
 		return fmt.Errorf("reading login response: %w", err)
 	}
 
-	if err := checkLoginErrors(string(body), def.Login.Error); err != nil {
+	if err := checkLoginErrors(string(body), def.Login.Error, rctx); err != nil {
 		return err
 	}
 

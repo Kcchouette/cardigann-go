@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
+	tmpl "github.com/Kcchouette/cardigann-go/template"
 )
 
 // Fixtures are built once at package init (outside any timed loop) so the
@@ -230,7 +231,7 @@ func BenchmarkCheckErrors_ReParse(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := CheckErrors(benchHTMLBody, selectors); err != nil {
+		if err := CheckErrors(benchHTMLBody, selectors, tmpl.Context{}); err != nil {
 			b.Fatal(err)
 		}
 	}

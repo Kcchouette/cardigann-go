@@ -351,7 +351,7 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 		return nil, fmt.Errorf("http status %d", resp.StatusCode)
 	}
 
-	if err := selector.CheckErrors(string(body), p.def.Search.Error); err != nil {
+	if err := selector.CheckErrors(string(body), p.def.Search.Error, rctx); err != nil {
 		return nil, fmt.Errorf("search error: %w", err)
 	}
 
