@@ -90,3 +90,74 @@ func keys(m map[string]RawDefinition) []string {
 	}
 	return out
 }
+
+func TestFetcher_FetchAll(t *testing.T) {
+	tarball := buildFixtureTarball(t, map[string]string{
+		"Indexers-abc123/definitions/v11/testtracker.yml": "id: testtracker\nname: TestTracker\n",
+		"Indexers-abc123/definitions/v11/other.yaml":      "id: other\nname: Other\n",
+		"Indexers-abc123/definitions/v10/legacy.yml":      "id: legacy\nname: Legacy\n",
+		"Indexers-abc123/definitions/v9/old.yml":          "id: old\nname: Old\n",
+		"Indexers-abc123/definitions/test/test.yml":       "id: test\nname: Test\n", // not a version dir, should be ignored
+		"Indexers-abc123/definitions/v11/deep/nested.yml": "id: deep\nname: Deep\n", // too deep, should be ignored
+		"Indexers-abc123/README.md":                       "# not a definition",
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(tarball)
+	}))
+	defer server.Close()
+
+	f := NewFetcher()
+	f.URLOverride = server.URL
+
+	results, err := f.FetchAll(context.Background())
+	if err != nil {
+		t.Fatalf("FetchAll: %v", err)
+	}
+
+	if len(results) != 4 {
+		t.Fatalf("expected 4 definitions, got %d: %+v", len(results), results)
+	}
+
+	// Check that all expected definitions are present with correct versions
+	byKey := make(map[string]RawDefinition)
+	for _, r := range results {
+		byKey[r.Version+"/"+r.ID] = r
+	}
+
+	tests := []struct {
+		key     string
+		wantSHA bool
+	}{
+		{"v11/testtracker", true},
+		{"v11/other", true},
+		{"v10/legacy", true},
+		{"v9/old", true},
+	}
+	for _, tt := range tests {
+		r, ok := byKey[tt.key]
+		if !ok {
+			t.Errorf("expected definition %q, got keys: %v", tt.key, keysBy(byKey))
+			continue
+		}
+		if tt.wantSHA && r.SHA == "" {
+			t.Errorf("definition %q: expected non-empty SHA", tt.key)
+		}
+	}
+
+	// Verify non-version dirs and deep files were skipped
+	if _, ok := byKey["test/test"]; ok {
+		t.Error("expected 'test/test' to be skipped (not a version directory)")
+	}
+	if _, ok := byKey["v11/deep"]; ok {
+		t.Error("expected 'v11/deep' to be skipped (too deep)")
+	}
+}
+
+func keysBy(m map[string]RawDefinition) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
