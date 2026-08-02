@@ -192,8 +192,9 @@ func TestExtractRelease_ChainSoftFailKeepsRow(t *testing.T) {
 }
 
 func TestResolveDownload_ChainPopulatesDownloadUri(t *testing.T) {
-	// Step 2 renders its path from {{ .DownloadUri.Path }}, proving the
-	// previously-dead DownloadUri context field is populated per chain step.
+	// DownloadUri is seeded from the row's download link at chain start
+	// (Prowlarr semantics) and overwritten per step; step 2 renders its path
+	// from {{ .DownloadUri.Path }} proving the per-step population.
 	def := cmodel.IndexerDefinition{
 		ID:       "downloaduri",
 		Name:     "DownloadUri",
@@ -239,7 +240,7 @@ func TestResolveDownload_ChainPopulatesDownloadUri(t *testing.T) {
 		Config:   map[string]string{},
 		Keywords: "test",
 		Query:    map[string]string{"Keywords": "test"},
-		Result:   map[string]string{"tid": "7"},
+		Result:   map[string]string{"tid": "7", "download": "/topic/7"},
 	}
 	result, err := provider.resolveDownload(context.Background(), server.Client(), rows[0], server.URL, rctx)
 	if err != nil {

@@ -50,6 +50,15 @@ func (p *Provider) resolveDownload(ctx context.Context, client interface {
 		chain = chain[:maxBeforeSteps]
 	}
 
+	// Seed DownloadUri with the row's original download link (Prowlarr
+	// semantics): before-chain templates reference the row's download URL,
+	// not an intermediate step's URL. All 12 corpus usages are at step 0.
+	if raw, ok := rctx.Result["download"]; ok && raw != "" {
+		if u, err := url.Parse(httputil.ResolveURL(baseURL, raw)); err == nil {
+			rctx.DownloadUri = tmpl.NewDownloadURL(u)
+		}
+	}
+
 	for i, step := range chain {
 		stepURL, err := resolveBeforeURL(row, baseURL, rctx, i, step, beforeResponse)
 		if err != nil {
@@ -74,10 +83,11 @@ func (p *Provider) resolveDownload(ctx context.Context, client interface {
 			break
 		}
 		beforeResponse = body
-		// Expose the resolved URL to templates (DownloadUri was previously
-		// declared but never populated).
+		// Expose the resolved step URL to templates (kept alongside the
+		// initial seed: the fork's chained tests read .DownloadUri.Path of
+		// the previous step).
 		if u, parseErr := url.Parse(stepURL); parseErr == nil {
-			rctx.DownloadUri = u
+			rctx.DownloadUri = tmpl.NewDownloadURL(u)
 		}
 	}
 

@@ -2143,13 +2143,24 @@ func TestSearch_EncodingKinozalFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encoding fixture: %v", err)
 	}
+	// The before-chain response is also served as windows-1251.
+	beforeHTML := `<ul><li>abcdef0123456789abcdef0123456789abcdef01</li></ul><div class="b">Фильм Название 2024</div>`
+	encodedBefore, _, err := transform.Bytes(charmap.Windows1251.NewEncoder(), []byte(beforeHTML))
+	if err != nil {
+		t.Fatalf("encoding fixture: %v", err)
+	}
 
+	var beforeID string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/browse.php" {
+		switch r.URL.Path {
+		case "/browse.php":
 			_, _ = w.Write(encoded)
-			return
+		case "/get_srv_details.php":
+			beforeID = r.URL.Query().Get("id")
+			_, _ = w.Write(encodedBefore)
+		default:
+			_, _ = w.Write([]byte("<html><body></body></html>"))
 		}
-		_, _ = w.Write([]byte("<html><body></body></html>"))
 	}))
 	defer server.Close()
 
@@ -2169,5 +2180,10 @@ func TestSearch_EncodingKinozalFixture(t *testing.T) {
 	}
 	if want := "/download.php?id=1"; releases[0].DownloadLink != want {
 		t.Errorf("download link = %q, want %q", releases[0].DownloadLink, want)
+	}
+	// The before chain ran with DownloadUri seeded from the row's download
+	// link: step 0 renders `id: {{ .DownloadUri.Query.id }}` → id=1.
+	if beforeID != "1" {
+		t.Errorf("before chain id = %q, want %q (DownloadUri seed)", beforeID, "1")
 	}
 }

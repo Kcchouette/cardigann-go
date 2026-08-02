@@ -53,7 +53,45 @@ type Context struct {
 	Categories  []string          // native category IDs mapped from Newznab IDs
 	Query       map[string]string // additional query parameters (categories, season, etc.)
 	Result      map[string]string // values already extracted for the current result row
-	DownloadUri *url.URL          // resolved download URL (usable in templates)
+	DownloadUri *DownloadURL      // resolved download URL (usable in templates)
+}
+
+// DownloadURL exposes .NET System.Uri-style members to Cardigann templates
+// (.DownloadUri.Query.<key> / .AbsoluteUri / .PathAndQuery / .AbsolutePath /
+// .Scheme / .Host / .Port; .Path and .RawQuery are kept for the fork's own
+// chained-before tests). Query holds the FIRST value per query key (scalar,
+// no brackets), matching Prowlarr's template variable expansion.
+type DownloadURL struct {
+	AbsoluteUri  string
+	AbsolutePath string
+	PathAndQuery string
+	Scheme       string
+	Host         string
+	Port         string
+	Path         string
+	RawQuery     string
+	Query        map[string]string
+}
+
+// NewDownloadURL builds a DownloadURL from a parsed URL.
+func NewDownloadURL(u *url.URL) *DownloadURL {
+	d := &DownloadURL{
+		AbsoluteUri:  u.String(),
+		AbsolutePath: u.Path,
+		PathAndQuery: u.RequestURI(), // Path + "?" + RawQuery, no trailing "?" when empty
+		Scheme:       u.Scheme,
+		Host:         u.Host,
+		Port:         u.Port(),
+		Path:         u.Path,
+		RawQuery:     u.RawQuery,
+		Query:        map[string]string{},
+	}
+	for k, vs := range u.Query() {
+		if len(vs) > 0 {
+			d.Query[k] = vs[0]
+		}
+	}
+	return d
 }
 
 // True renders the constant "true" (corpus idiom: `{{ .True }}`).
@@ -94,9 +132,10 @@ var templateCache sync.Map // string -> cachedTemplate
 
 // funcMap is static: FuncMap() depends on no state, so build it once rather
 // than on every Render call. It exposes the named helpers (ToLower/ToUpper),
-// `join`, and every registered field filter as a template function (piped
-// value arrives as the last argument; see filterAsFunc). `andmatch` is row
-// level and needs keywords — not exposed.
+// `join`, and every registered field filter as a template function. The
+// corpus calls these in DIRECT form with the value FIRST (`{{ re_replace .X
+// "a" "b" }}`, Scriban convention — 44/44 direct, zero pipes); the wrapper
+// treats args[0] as the value.
 var funcMap = buildFuncMap()
 
 func buildFuncMap() template.FuncMap {
@@ -115,16 +154,14 @@ func buildFuncMap() template.FuncMap {
 }
 
 // filterAsFunc exposes a field filter (value, args...) as a template
-// function. Go template pipes pass the previous value as the LAST argument,
-// so the wrapper pops the last variadic argument as the value and forwards
-// the rest as the filter's positional args.
+// function. The corpus convention is the DIRECT (Scriban) call form where
+// the value is the FIRST argument: `{{ re_replace .Field "re" "repl" }}`.
 func filterAsFunc(name string, fn filters.FilterFunc) func(args ...string) (string, error) {
 	return func(args ...string) (string, error) {
 		if len(args) == 0 {
 			return "", fmt.Errorf("%s: missing value", name)
 		}
-		value := args[len(args)-1]
-		return fn(value, args[:len(args)-1])
+		return fn(args[0], args[1:])
 	}
 }
 

@@ -2,6 +2,7 @@ package template
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"sync"
 	"testing"
@@ -180,17 +181,19 @@ func TestRender_FilterFuncs(t *testing.T) {
 		"u":     "ABC",
 		"q":     "http://e.test/a?f=42",
 	}}
+	// The corpus calls filter template functions in DIRECT form with the
+	// value FIRST (Scriban convention: 44/44 direct, zero pipes).
 	tests := []struct {
 		name     string
 		template string
 		expected string
 	}{
-		{"re_replace pipe", `{{ .Result.title | re_replace "a" "b" }}`, "cbt"},
-		{"replace pipe", `{{ .Result.t | replace "x" "y" }}`, "yy1"},
-		{"split pipe", `{{ .Result.s | split "," }}`, "a"},
-		{"append pipe", `{{ .Result.x | append "!" }}`, "hey!"},
-		{"tolower pipe", `{{ .Result.u | tolower }}`, "abc"},
-		{"querystring pipe", `{{ .Result.q | querystring "f" }}`, "42"},
+		{"re_replace direct", `{{ re_replace .Result.title "a" "b" }}`, "cbt"},
+		{"replace direct", `{{ replace .Result.t "x" "y" }}`, "yy1"},
+		{"split direct", `{{ split .Result.s "," }}`, "a"},
+		{"append direct", `{{ append .Result.x "!" }}`, "hey!"},
+		{"tolower direct", `{{ tolower .Result.u }}`, "abc"},
+		{"querystring direct", `{{ querystring .Result.q "f" }}`, "42"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -203,6 +206,69 @@ func TestRender_FilterFuncs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRender_FilterFuncsCorpusVerbatim covers corpus-verbatim direct-form
+// calls that previously corrupted values under the pipe convention.
+func TestRender_FilterFuncsCorpusVerbatim(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		ctx      Context
+		expected string
+	}{
+		{"mvgroup withsubs", `{{ re_replace .Config.withsubs "_" "" }}`, Context{Config: map[string]string{"withsubs": "a_b_c"}}, "abc"},
+		{"magnetdownload absolute path", `{{ re_replace .DownloadUri.AbsolutePath "/info/" "" }}`,
+			Context{DownloadUri: NewDownloadURL(mustParseURL("https://x/info/14152933"))}, "14152933"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Render(tt.template, tt.ctx)
+			if err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			if got != tt.expected {
+				t.Errorf("got %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestRender_DownloadUriMembers covers the .NET-style DownloadUri surface
+// and the scalar (first-value) .Query.<key> semantics.
+func TestRender_DownloadUriMembers(t *testing.T) {
+	u := mustParseURL("https://tracker.example.info/info/14152933?torrentid=7&torrentid=8&x=1")
+	ctx := Context{DownloadUri: NewDownloadURL(u)}
+	tests := []struct {
+		name     string
+		template string
+		expected string
+	}{
+		{"absolute uri", `{{ .DownloadUri.AbsoluteUri }}`, "https://tracker.example.info/info/14152933?torrentid=7&torrentid=8&x=1"},
+		{"absolute path", `{{ .DownloadUri.AbsolutePath }}`, "/info/14152933"},
+		{"path and query", `{{ .DownloadUri.PathAndQuery }}`, "/info/14152933?torrentid=7&torrentid=8&x=1"},
+		{"query first value", `{{ .DownloadUri.Query.torrentid }}`, "7"},
+		{"path", `{{ .DownloadUri.Path }}`, "/info/14152933"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Render(tt.template, ctx)
+			if err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			if got != tt.expected {
+				t.Errorf("got %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func mustParseURL(s string) *url.URL {
+	u, err := url.Parse(s)
+	if err != nil {
+		panic(err)
+	}
+	return u
 }
 
 func TestRender_QueryFields(t *testing.T) {
