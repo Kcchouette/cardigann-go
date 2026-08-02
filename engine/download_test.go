@@ -72,11 +72,13 @@ func TestResolveDownload_BeforePostPath(t *testing.T) {
 			Fields: map[string]cmodel.Field{},
 		},
 		Download: &cmodel.Download{
-			Before: &cmodel.DownloadBefore{
-				Path:   "/details/{{ .Result.details_id }}",
-				Method: "post",
-				Inputs: map[string]string{
-					"action": "download",
+			Before: cmodel.DownloadBeforeList{
+				{
+					Path:   "/details/{{ .Result.details_id }}",
+					Method: "post",
+					Inputs: map[string]string{
+						"action": "download",
+					},
 				},
 			},
 			Selectors: []cmodel.DownloadSelector{
@@ -138,10 +140,12 @@ func TestResolveDownload_BeforePathSelector(t *testing.T) {
 			Fields: map[string]cmodel.Field{},
 		},
 		Download: &cmodel.Download{
-			Before: &cmodel.DownloadBefore{
-				PathSelector: &cmodel.SelectorField{
-					Selector:  "a.intermediate",
-					Attribute: "href",
+			Before: cmodel.DownloadBeforeList{
+				{
+					PathSelector: &cmodel.SelectorField{
+						Selector:  "a.intermediate",
+						Attribute: "href",
+					},
 				},
 			},
 			Selectors: []cmodel.DownloadSelector{
@@ -195,9 +199,11 @@ func TestResolveDownload_Headers(t *testing.T) {
 			Fields: map[string]cmodel.Field{},
 		},
 		Download: &cmodel.Download{
-			Before: &cmodel.DownloadBefore{
-				Path:   "/page",
-				Method: "get",
+			Before: cmodel.DownloadBeforeList{
+				{
+					Path:   "/page",
+					Method: "get",
+				},
 			},
 			Headers: map[string][]string{
 				"X-Custom-Token": {"secret123"},
@@ -397,11 +403,13 @@ func TestResolveDownload_BeforeGetPath(t *testing.T) {
 			Fields: map[string]cmodel.Field{},
 		},
 		Download: &cmodel.Download{
-			Before: &cmodel.DownloadBefore{
-				Path:   "/page?id={{ .Result.page_id }}",
-				Method: "get",
-				Inputs: map[string]string{
-					"token": "abc",
+			Before: cmodel.DownloadBeforeList{
+				{
+					Path:   "/page?id={{ .Result.page_id }}",
+					Method: "get",
+					Inputs: map[string]string{
+						"token": "abc",
+					},
 				},
 			},
 			Selectors: []cmodel.DownloadSelector{
@@ -463,9 +471,11 @@ func TestExtractRelease_WithDownloadResolution(t *testing.T) {
 			},
 		},
 		Download: &cmodel.Download{
-			Before: &cmodel.DownloadBefore{
-				Path:   "/details/{{ .Result.details_id }}",
-				Method: "get",
+			Before: cmodel.DownloadBeforeList{
+				{
+					Path:   "/details/{{ .Result.details_id }}",
+					Method: "get",
+				},
 			},
 			Selectors: []cmodel.DownloadSelector{
 				{Selector: "a.real-dl", Attribute: "href", UseBeforeResponse: true},
@@ -529,9 +539,11 @@ func TestExtractRelease_FallbackWhenResolveFails(t *testing.T) {
 			},
 		},
 		Download: &cmodel.Download{
-			Before: &cmodel.DownloadBefore{
-				Path:   "/nonexistent",
-				Method: "get",
+			Before: cmodel.DownloadBeforeList{
+				{
+					Path:   "/nonexistent",
+					Method: "get",
+				},
 			},
 			Selectors: []cmodel.DownloadSelector{
 				{Selector: "a.nonexistent", Attribute: "href", UseBeforeResponse: true},

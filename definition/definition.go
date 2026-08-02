@@ -255,9 +255,31 @@ type SelectorField struct {
 type Download struct {
 	Selectors []DownloadSelector  `yaml:"selectors,omitempty"`
 	Method    string              `yaml:"method,omitempty"`
-	Before    *DownloadBefore     `yaml:"before,omitempty"`
+	Before    DownloadBeforeList  `yaml:"before,omitempty"`
 	Headers   map[string][]string `yaml:"headers,omitempty"`
 	Infohash  *DownloadInfohash   `yaml:"infohash,omitempty"`
+}
+
+// DownloadBeforeList is a chain of intermediate requests performed before
+// extracting the real link. It accepts a single DownloadBefore mapping (legacy
+// form, used by most of the v11 corpus) or a sequence of them.
+type DownloadBeforeList []DownloadBefore
+
+// UnmarshalYAML accepts both the legacy single-mapping form and a sequence,
+// because yaml.v3 does not coerce a single mapping into a slice. The failed
+// single attempt leaves no poisoned error state (yaml.v3 resets per call).
+func (l *DownloadBeforeList) UnmarshalYAML(unmarshal func(any) error) error {
+	var single DownloadBefore
+	if err := unmarshal(&single); err == nil {
+		*l = DownloadBeforeList{single}
+		return nil
+	}
+	var list []DownloadBefore
+	if err := unmarshal(&list); err != nil {
+		return err
+	}
+	*l = DownloadBeforeList(list)
+	return nil
 }
 
 // DownloadBefore describes an intermediate request to perform before extracting the real link.

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 
+	cmodel "github.com/Kcchouette/cardigann-go/definition"
 	"github.com/Kcchouette/cardigann-go/internal/httputil"
 	"github.com/Kcchouette/cardigann-go/selector"
 	tmpl "github.com/Kcchouette/cardigann-go/template"
@@ -19,10 +20,22 @@ type downloadResult struct {
 	URL      string
 	InfoHash string
 	Title    string
+	// Unlocked reports whether the link was resolved through a chained
+	// download.before sequence (e.g. a "thanks" POST unlocking hidden content).
+	Unlocked bool
 }
+
+// maxBeforeSteps caps the number of chained download.before steps.
+const maxBeforeSteps = 5
 
 // resolveDownload resolves the actual download link from the row's download
 // definition. If no download is defined, returns nil.
+//
+// The before block is a chain of intermediate requests: step 0 resolves its
+// pathselector against the row, later steps against the previous step's
+// response body. The chain soft-fails without error: a failed or missing step
+// stops the chain and extraction proceeds with the last available response,
+// so the row always survives (e.g. a one-shot "thanks" token already consumed).
 func (p *Provider) resolveDownload(ctx context.Context, client interface {
 	Do(*http.Request) (*http.Response, error)
 }, row selector.Node, baseURL string, rctx tmpl.Context) (*downloadResult, error) {
@@ -33,84 +46,31 @@ func (p *Provider) resolveDownload(ctx context.Context, client interface {
 
 	var beforeResponse string
 	var downloadURL string
+	chain := dl.Before
+	if len(chain) > maxBeforeSteps {
+		chain = chain[:maxBeforeSteps]
+	}
 
-	if dl.Before != nil {
-		var beforeURL string
-		if dl.Before.PathSelector != nil {
-			extracted, err := extractSelectorField(row, dl.Before.PathSelector)
-			if err != nil {
-				return nil, fmt.Errorf("before pathselector: %w", err)
-			}
-			beforeURL = httputil.ResolveURL(baseURL, extracted)
-		} else if dl.Before.Path != "" {
-			rendered, err := tmpl.Render(dl.Before.Path, rctx)
-			if err != nil {
-				return nil, fmt.Errorf("rendering before path: %w", err)
-			}
-			beforeURL = httputil.ResolveURL(baseURL, rendered)
+	for i, step := range chain {
+		stepURL, err := resolveBeforeURL(row, baseURL, rctx, i, step, beforeResponse)
+		if err != nil {
+			return nil, fmt.Errorf("before step %d: %w", i, err)
+		}
+		if stepURL == "" {
+			// Nothing to request (missing selector match): stop the chain.
+			break
 		}
 
-		if beforeURL != "" {
-			method := strings.ToUpper(dl.Before.Method)
-			if method == "" {
-				method = http.MethodGet
-			}
-
-			// Render inputs (without empty/"false" value filtering)
-			renderedInputs, _, err := renderInputs(dl.Before.Inputs, rctx)
-			if err != nil {
-				return nil, err
-			}
-
-			var req *http.Request
-			if method == http.MethodPost {
-				values := url.Values{}
-				for k, v := range renderedInputs {
-					values.Set(k, v)
-				}
-				req, err = http.NewRequestWithContext(ctx, method, beforeURL, strings.NewReader(values.Encode()))
-				if err != nil {
-					return nil, fmt.Errorf("creating before request: %w", err)
-				}
-				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			} else {
-				u, err := url.Parse(beforeURL)
-				if err != nil {
-					return nil, fmt.Errorf("invalid before url %q: %w", beforeURL, err)
-				}
-				values := u.Query()
-				for k, v := range renderedInputs {
-					values.Set(k, v)
-				}
-				u.RawQuery = values.Encode()
-				req, err = http.NewRequestWithContext(ctx, method, u.String(), nil)
-				if err != nil {
-					return nil, fmt.Errorf("creating before request: %w", err)
-				}
-			}
-
-			if dl.Headers != nil {
-				for header, vals := range dl.Headers {
-					for _, v := range vals {
-						req.Header.Add(header, v)
-					}
-				}
-			}
-
-			resp, err := client.Do(req)
-			if err != nil {
-				return nil, fmt.Errorf("before request: %w", err)
-			}
-			defer resp.Body.Close()
-
-			body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
-			if err != nil {
-				return nil, fmt.Errorf("reading before response: %w", err)
-			}
-			if resp.StatusCode != http.StatusOK {
-				return nil, fmt.Errorf("before request status %d", resp.StatusCode)
-			}
-			beforeResponse = string(body)
+		body, err := p.beforeRequest(ctx, client, step, stepURL, rctx, dl.Headers)
+		if err != nil {
+			// Soft-fail: keep the last response and the row's raw values.
+			break
+		}
+		beforeResponse = body
+		// Expose the resolved URL to templates (DownloadUri was previously
+		// declared but never populated).
+		if u, parseErr := url.Parse(stepURL); parseErr == nil {
+			rctx.DownloadUri = u
 		}
 	}
 
@@ -172,6 +132,11 @@ func (p *Provider) resolveDownload(ctx context.Context, client interface {
 	}
 
 	result := &downloadResult{URL: downloadURL}
+	// With a chained before sequence, the release counts as unlocked when the
+	// link was resolved from the chain's last response.
+	if len(chain) > 0 {
+		result.Unlocked = downloadURL != "" && beforeResponse != ""
+	}
 
 	// Handle infohash extraction
 	if dl.Infohash != nil {
@@ -213,4 +178,143 @@ func (p *Provider) resolveDownload(ctx context.Context, client interface {
 	}
 
 	return result, nil
+}
+
+// resolveBeforeURL computes the URL of a chain step. Step 0 resolves its
+// pathselector against the row; later steps against the previous response
+// body (parsed as HTML). A literal path is rendered as a template with the
+// row context. An empty result means "nothing to request": the chain stops.
+func resolveBeforeURL(row selector.Node, baseURL string, rctx tmpl.Context, i int, step cmodel.DownloadBefore, beforeResponse string) (string, error) {
+	if step.PathSelector != nil {
+		var extracted string
+		var err error
+		if i == 0 {
+			extracted, err = extractSelectorField(row, step.PathSelector)
+			if err != nil {
+				return "", nil
+			}
+		} else {
+			extracted, err = extractFromResponse(beforeResponse, step.PathSelector)
+			if err != nil {
+				return "", err
+			}
+		}
+		if extracted == "" {
+			return "", nil
+		}
+		return httputil.ResolveURL(baseURL, extracted), nil
+	}
+	if step.Path != "" {
+		rendered, err := tmpl.Render(step.Path, rctx)
+		if err != nil {
+			return "", fmt.Errorf("rendering before path: %w", err)
+		}
+		return httputil.ResolveURL(baseURL, rendered), nil
+	}
+	return "", nil
+}
+
+// extractFromResponse extracts a SelectorField value from a previous chain
+// step's response body. A missing match is a soft result (empty string), so
+// the chain can stop gracefully instead of failing the row.
+func extractFromResponse(beforeResponse string, sf *cmodel.SelectorField) (string, error) {
+	if sf == nil || sf.Selector == "" {
+		return "", nil
+	}
+	if sf.Text != "" {
+		if len(sf.Filters) > 0 {
+			return filters.Apply(sf.Text, toFilterSteps(sf.Filters))
+		}
+		return sf.Text, nil
+	}
+
+	doc, err := selector.NewHTMLDocument(beforeResponse)
+	if err != nil {
+		return "", fmt.Errorf("parsing before response: %w", err)
+	}
+	nodes, err := doc.Find(sf.Selector)
+	if err != nil || len(nodes) == 0 {
+		return "", nil
+	}
+
+	target := nodes[0]
+	var raw string
+	var ok bool
+	if sf.Attribute != "" {
+		raw, ok = target.Attr(sf.Attribute)
+		if !ok {
+			return "", nil
+		}
+	} else {
+		raw = target.Text()
+	}
+	if len(sf.Filters) > 0 {
+		return filters.Apply(raw, toFilterSteps(sf.Filters))
+	}
+	return raw, nil
+}
+
+// beforeRequest performs one chain step: a GET or POST request to stepURL,
+// applying the rendered inputs, the definition headers and a 16 MiB cap.
+func (p *Provider) beforeRequest(ctx context.Context, client interface {
+	Do(*http.Request) (*http.Response, error)
+}, step cmodel.DownloadBefore, stepURL string, rctx tmpl.Context, headers map[string][]string) (string, error) {
+	method := strings.ToUpper(step.Method)
+	if method == "" {
+		method = http.MethodGet
+	}
+
+	// Render inputs (without empty/"false" value filtering)
+	renderedInputs, _, err := renderInputs(step.Inputs, rctx)
+	if err != nil {
+		return "", err
+	}
+
+	var req *http.Request
+	if method == http.MethodPost {
+		values := url.Values{}
+		for k, v := range renderedInputs {
+			values.Set(k, v)
+		}
+		req, err = http.NewRequestWithContext(ctx, method, stepURL, strings.NewReader(values.Encode()))
+		if err != nil {
+			return "", fmt.Errorf("creating before request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	} else {
+		u, err := url.Parse(stepURL)
+		if err != nil {
+			return "", fmt.Errorf("invalid before url %q: %w", stepURL, err)
+		}
+		values := u.Query()
+		for k, v := range renderedInputs {
+			values.Set(k, v)
+		}
+		u.RawQuery = values.Encode()
+		req, err = http.NewRequestWithContext(ctx, method, u.String(), nil)
+		if err != nil {
+			return "", fmt.Errorf("creating before request: %w", err)
+		}
+	}
+
+	for header, vals := range headers {
+		for _, v := range vals {
+			req.Header.Add(header, v)
+		}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("before request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return "", fmt.Errorf("reading before response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("before request status %d", resp.StatusCode)
+	}
+	return string(body), nil
 }

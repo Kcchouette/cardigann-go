@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -239,12 +240,44 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 				if dlResult.Title != "" {
 					rel.Title = dlResult.Title
 				}
+				if dlResult.Unlocked {
+					rel.Unlocked = true
+				}
 			}
 		}
 		// If resolveDownload fails, fall back to the raw field value already in rel.DownloadLink
 	}
 
+	rel.Hosts = DetectHosts(rel.DownloadLink)
+
 	return rel, nil
+}
+
+// ddlHostSubstrings are the file hosts recognized for DDL releases.
+var ddlHostSubstrings = []string{"uptobox", "1fichier", "drive.google", "mega.nz", "mediafire"}
+
+// DetectHosts returns the recognized DDL file host of a link, normalized
+// (no scheme, no port, no "www." prefix) and lowercased. It returns nil for
+// links without a recognized host or for empty links.
+func DetectHosts(link string) []string {
+	if link == "" {
+		return nil
+	}
+	u, err := url.Parse(link)
+	if err != nil {
+		return nil
+	}
+	host := strings.ToLower(u.Hostname())
+	host = strings.TrimPrefix(host, "www.")
+	if host == "" {
+		return nil
+	}
+	for _, sub := range ddlHostSubstrings {
+		if strings.Contains(host, sub) {
+			return []string{host}
+		}
+	}
+	return nil
 }
 
 func toFilterSteps(steps []cmodel.FilterStep) []filters.Step {
