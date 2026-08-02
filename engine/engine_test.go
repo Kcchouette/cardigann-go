@@ -2187,3 +2187,325 @@ func TestSearch_EncodingKinozalFixture(t *testing.T) {
 		t.Errorf("before chain id = %q, want %q (DownloadUri seed)", beforeID, "1")
 	}
 }
+
+// TestSearch_JSONAttribute covers rows.attribute (UNIT3D shape): the named
+// key replaces each matched row for field extraction.
+func TestSearch_JSONAttribute(t *testing.T) {
+	yamlDef := `
+id: attrjson
+name: AttrJSON
+description: rows.attribute test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /api/search
+      response:
+        type: json
+  rows:
+    selector: data
+    attribute: attributes
+  fields:
+    title:
+      selector: name
+    download:
+      selector: download_link
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	jsonBody := `{"data":[{"attributes":{"name":"Movie A","download_link":"/dl/1"}},{"attributes":{"name":"Movie B","download_link":"/dl/2"}}]}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(jsonBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 2 {
+		t.Fatalf("expected 2 releases, got %d", len(releases))
+	}
+	if releases[0].Title != "Movie A" || releases[1].Title != "Movie B" {
+		t.Errorf("unexpected titles: %q, %q", releases[0].Title, releases[1].Title)
+	}
+	if releases[0].DownloadLink != "/dl/1" {
+		t.Errorf("download = %q, want /dl/1", releases[0].DownloadLink)
+	}
+}
+
+// TestSearch_JSONAttributeMultiple covers rows.multiple: each element of the
+// attribute array becomes its own release row.
+func TestSearch_JSONAttributeMultiple(t *testing.T) {
+	yamlDef := `
+id: multjson
+name: MultJSON
+description: rows.multiple test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /api/search
+      response:
+        type: json
+  rows:
+    selector: data
+    attribute: torrents
+    multiple: true
+  fields:
+    title:
+      selector: name
+    download:
+      selector: url
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	jsonBody := `{"data":[
+	  {"torrents":[{"name":"A-1","url":"/t1"},{"name":"A-2","url":"/t2"}]},
+	  {"torrents":[{"name":"B-1","url":"/t3"}]}
+	]}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(jsonBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 3 {
+		t.Fatalf("expected 3 releases (2+1 expanded), got %d", len(releases))
+	}
+	if releases[0].DownloadLink != "/t1" || releases[2].DownloadLink != "/t3" {
+		t.Errorf("unexpected download links: %q, %q", releases[0].DownloadLink, releases[2].DownloadLink)
+	}
+}
+
+// TestSearch_JSONRecursiveDescent covers `..`-prefixed field selectors: they
+// evaluate against the ORIGINAL row (the parent object), not the attribute
+// value. gjson has no `..` — this guards the document-order walker.
+func TestSearch_JSONRecursiveDescent(t *testing.T) {
+	yamlDef := `
+id: descent
+name: Descent
+description: recursive descent test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /api/search
+      response:
+        type: json
+  rows:
+    selector: data
+    attribute: torrents
+    multiple: true
+  fields:
+    title:
+      selector: ..name
+    download:
+      selector: url
+    category:
+      selector: ..categoryID
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	jsonBody := `{"data":[
+	  {"name":"A","categoryID":"7","torrents":[{"url":"/t1"},{"url":"/t2"}]}
+	]}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(jsonBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 2 {
+		t.Fatalf("expected 2 releases, got %d", len(releases))
+	}
+	if releases[0].Title != "A" {
+		t.Errorf("title = %q, want A (from parent via ..name)", releases[0].Title)
+	}
+}
+
+// TestSearch_JSONAttributeMissing covers attribute-less rows: they are
+// skipped whether or not missingAttributeEqualsNoResults is set (lenient).
+func TestSearch_JSONAttributeMissing(t *testing.T) {
+	yamlDef := `
+id: missjson
+name: MissJSON
+description: missing attribute test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /api/search
+      response:
+        type: json
+  rows:
+    selector: data
+    attribute: torrents
+    multiple: true
+    missingAttributeEqualsNoResults: true
+  fields:
+    title:
+      selector: name
+    download:
+      selector: url
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+	if !def.Search.Rows.MissingAttributeEqualsNoResults {
+		t.Fatal("camelCase tag missingAttributeEqualsNoResults not parsed")
+	}
+
+	jsonBody := `{"data":[
+	  {"torrents":[{"name":"WithTorrent","url":"/t1"}]},
+	  {"torrents":[]},
+	  {}
+	]}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(jsonBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	// WithTorrent expands to 1; the empty array and the missing attribute
+	// yield nothing.
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+	if releases[0].Title != "WithTorrent" {
+		t.Errorf("title = %q, want WithTorrent", releases[0].Title)
+	}
+}
+
+// TestSearch_JSONAttributeCountOrder pins the ordering: rows.count caps the
+// TOP-LEVEL selection (movies) BEFORE the attribute/multiple expansion (yts
+// shape), not the expanded torrent rows.
+func TestSearch_JSONAttributeCountOrder(t *testing.T) {
+	yamlDef := `
+id: ytsshape
+name: YTSShape
+description: count before expansion test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /api/search
+      response:
+        type: json
+  rows:
+    selector: data.movies
+    attribute: torrents
+    multiple: true
+    count:
+      selector: data.movie_count
+  fields:
+    title:
+      selector: ..title
+    download:
+      selector: url
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	jsonBody := `{"data":{"movie_count":2,"movies":[
+	  {"title":"M1","torrents":[{"url":"/m1-1"},{"url":"/m1-2"}]},
+	  {"title":"M2","torrents":[{"url":"/m2-1"}]},
+	  {"title":"M3","torrents":[{"url":"/m3-1"}]}
+	]}}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(jsonBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	// movie_count=2 caps the movies first: M1+M2 expand to 3 torrent rows.
+	if len(releases) != 3 {
+		t.Fatalf("expected 3 releases (2 movies capped before expansion), got %d", len(releases))
+	}
+	if releases[0].Title != "M1" || releases[1].Title != "M1" || releases[2].Title != "M2" {
+		t.Errorf("unexpected titles: %q, %q, %q", releases[0].Title, releases[1].Title, releases[2].Title)
+	}
+}
+
+// TestSearch_JSONAttributeAitherFixture runs the committed aither-api.yml
+// fixture end-to-end (rows.attribute + fields sub-selecting the attributes
+// object).
+func TestSearch_JSONAttributeAitherFixture(t *testing.T) {
+	raw, err := os.ReadFile("../internal/defstest/testdata/aither-api.yml")
+	if err != nil {
+		t.Fatalf("reading aither fixture: %v", err)
+	}
+	def, err := cmodel.Parse(raw)
+	if err != nil {
+		t.Fatalf("parsing aither fixture: %v", err)
+	}
+
+	jsonBody := `{"data":[{"attributes":{"name":"Movie A","download_link":"/dl/1","category_id":5}}]}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(jsonBody))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{Keywords: "test"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+	if releases[0].Title != "Movie A" {
+		t.Errorf("title = %q, want Movie A (extracted from attributes object)", releases[0].Title)
+	}
+}

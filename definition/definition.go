@@ -252,14 +252,19 @@ type ResponseInfo struct {
 }
 
 // Rows describes how to select result rows in the response document.
-// Attribute is parsed for schema compatibility; its runtime semantics
-// (element -> value rows) are not implemented yet (known limitation).
+// Attribute (JSON only, matching Prowlarr) re-bases each matched row onto
+// its named key; Multiple fans an array attribute into individual rows;
+// MissingAttributeEqualsNoResults is parsed for schema compatibility — the
+// engine always skips an attribute-less row (lenient, diverging from
+// Prowlarr's hard failure without the flag).
 type Rows struct {
-	Selector  string         `yaml:"selector"`
-	After     int            `yaml:"after"`
-	Filters   []FilterStep   `yaml:"filters"`
-	Count     *SelectorField `yaml:"count,omitempty"` // row limit selector (e.g. JSON $.numFound)
-	Attribute string         `yaml:"attribute,omitempty"`
+	Selector                        string         `yaml:"selector"`
+	After                           int            `yaml:"after"`
+	Filters                         []FilterStep   `yaml:"filters"`
+	Count                           *SelectorField `yaml:"count,omitempty"` // row limit selector (e.g. JSON $.numFound)
+	Attribute                       string         `yaml:"attribute,omitempty"`
+	Multiple                        bool           `yaml:"multiple,omitempty"`
+	MissingAttributeEqualsNoResults bool           `yaml:"missingAttributeEqualsNoResults,omitempty"` // camelCase EXACT (yaml.v3 is case-sensitive)
 }
 
 // Field describes how to extract and transform a value for a result row.

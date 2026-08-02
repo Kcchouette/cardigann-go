@@ -58,6 +58,25 @@ func (p *Provider) parseResults(ctx context.Context, body string, responseType s
 		}
 	}
 
+	// rows.attribute: re-base each JSON row onto its named key (UNIT3D
+	// `data` -> `attributes`, yts/hebits `torrents`), expanding arrays into
+	// individual rows when rows.multiple is set. HTML/XML rows ignore
+	// attribute entirely (Prowlarr parity). An attribute-less row is skipped
+	// (lenient, with or without missingAttributeEqualsNoResults). This runs
+	// AFTER count so the cap applies to the top-level selection (movies),
+	// not the expanded rows (required for yts).
+	if p.def.Search.Rows.Attribute != "" {
+		expanded := make([]selector.Node, 0, len(rows))
+		for _, row := range rows {
+			sub, ok := selector.ExpandAttribute(row, p.def.Search.Rows.Attribute, p.def.Search.Rows.Multiple)
+			if !ok {
+				continue
+			}
+			expanded = append(expanded, sub...)
+		}
+		rows = expanded
+	}
+
 	// Apply row-level filters (e.g. andmatch) before field extraction.
 	if len(p.def.Search.Rows.Filters) > 0 {
 		filtered := rows[:0]
