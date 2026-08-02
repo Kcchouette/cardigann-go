@@ -48,14 +48,14 @@ func TestExtractRelease_ThanksChain(t *testing.T) {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/viewtopic.php"):
 			topicGets++
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, `<html><body><div class="postbody">
+			_, _ = fmt.Fprint(w, `<html><body><div class="postbody">
 				{HIDEBB_MESSAGE_HIDDEN_DESCRIPTION}
 				<a id="lnk_thanks_post42" href="/viewtopic.php?f=1&p=42&thanks=42">Merci</a>
 			</div></body></html>`)
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/viewtopic.php"):
 			thanksPosts++
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, `<html><body><div class="postbody">
+			_, _ = fmt.Fprint(w, `<html><body><div class="postbody">
 				<a href="https://www.uptobox.com/abc123">Uptobox</a>
 				<a href="https://1fichier.com/?xyz">1fichier</a>
 			</div></body></html>`)
@@ -103,7 +103,7 @@ func TestExtractRelease_ThanksChainAlreadyUnlocked(t *testing.T) {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/viewtopic.php"):
 			topicGets++
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, `<html><body><div class="postbody">
+			_, _ = fmt.Fprint(w, `<html><body><div class="postbody">
 				<a href="https://www.uptobox.com/ready">Uptobox</a>
 			</div></body></html>`)
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/viewtopic.php"):
@@ -219,10 +219,10 @@ func TestResolveDownload_ChainPopulatesDownloadUri(t *testing.T) {
 		switch {
 		case r.URL.Path == "/topic/7" && r.Method == http.MethodGet:
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, `<html><body><a class="real-dl" href="/final.torrent">DL</a></body></html>`)
+			_, _ = fmt.Fprint(w, `<html><body><a class="real-dl" href="/final.torrent">DL</a></body></html>`)
 		case r.URL.Path == "/topic/7/thanks" && r.Method == http.MethodPost:
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, `<html><body><a class="real-dl" href="/unlocked.torrent">DL</a></body></html>`)
+			_, _ = fmt.Fprint(w, `<html><body><a class="real-dl" href="/unlocked.torrent">DL</a></body></html>`)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

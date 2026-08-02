@@ -307,7 +307,7 @@ func (p *Provider) beforeRequest(ctx context.Context, client interface {
 	if err != nil {
 		return "", fmt.Errorf("before request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
