@@ -2,9 +2,9 @@ package filters
 
 import "testing"
 
-// BenchmarkFuzzyTime measures the fuzzytime filter on a value that only
-// matches in the final fuzzy-layout pass (11 dateLayouts + 6 fuzzyLayouts
-// attempts — the worst realistic case).
+// BenchmarkFuzzyTime measures the fuzzytime filter on a value that fails all
+// 11 dateLayouts attempts, then matches on the FIRST fuzzy layout
+// (worst realistic case: ~17 time.Parse attempts).
 func BenchmarkFuzzyTime(b *testing.B) {
 	steps := []Step{{Name: "fuzzytime"}}
 	b.ReportAllocs()

@@ -10,6 +10,10 @@ func BenchmarkRender_FieldTemplate(b *testing.B) {
 		Config: map[string]string{"freeleech": "true"},
 		Result: map[string]string{"title": "Ubuntu 24.04 ISO"},
 	}
+	// Warm-up: populate the one-shot template cache outside timing.
+	if _, err := Render(src, ctx); err != nil {
+		b.Fatal(err)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -24,6 +28,9 @@ func BenchmarkRender_FieldTemplate(b *testing.B) {
 func BenchmarkRender_InvalidTemplate(b *testing.B) {
 	src := `{{ .Unclosed`
 	ctx := Context{Result: map[string]string{"title": "x"}}
+	if _, err := Render(src, ctx); err == nil {
+		b.Fatal("expected parse error")
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
