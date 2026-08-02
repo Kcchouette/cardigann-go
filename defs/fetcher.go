@@ -87,6 +87,7 @@ func (f *Fetcher) FetchVersion(ctx context.Context, version string) ([]RawDefini
 	if f.ifNoneMatch != "" {
 		req.Header.Set("If-None-Match", f.ifNoneMatch)
 	}
+	f.notModified = false // a fresh fetch always starts from a known state
 
 	resp, err := f.HTTPClient.Do(req)
 	if err != nil {
@@ -174,6 +175,7 @@ func (f *Fetcher) FetchAll(ctx context.Context) ([]RawDefinition, error) {
 	if f.ifNoneMatch != "" {
 		req.Header.Set("If-None-Match", f.ifNoneMatch)
 	}
+	f.notModified = false // a fresh fetch always starts from a known state
 
 	resp, err := f.HTTPClient.Do(req)
 	if err != nil {

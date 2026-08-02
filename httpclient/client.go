@@ -117,6 +117,7 @@ func buildTransport(proxyURL string) (http.RoundTripper, error) {
 			return nil, fmt.Errorf("building socks5 dialer: %w", err)
 		}
 		tr := tunedTransport.Clone()
+		tr.Proxy = nil // the socks5 dialer IS the proxy path; an env proxy must not also apply
 		tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return dialer.Dial(network, addr)
 		}
