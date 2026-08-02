@@ -494,6 +494,6 @@ search:
 		t.Fatalf("Parse: %v", err)
 	}
 	if def.Search.Rows.Attribute != "attributes" {
-		t.Errorf("rows.attribute = %q, want attributes (parse-only)", def.Search.Rows.Attribute)
+		t.Errorf("rows.attribute = %q, want attributes", def.Search.Rows.Attribute)
 	}
 }
