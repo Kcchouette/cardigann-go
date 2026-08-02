@@ -123,8 +123,8 @@ func BenchmarkRender_CachedTemplate(b *testing.B) {
 func TestRender_TrueFalse(t *testing.T) {
 	// .False must be falsy (empty string): the corpus idiom
 	// `eq .Query.IMDBID .False` compares against the empty value the engine
-	// uses for absent query parameters.
-	got, err := Render(`{{ if eq .Query.IMDBID .False }}noid{{ else }}hastmdb{{ end }}`, Context{Query: map[string]string{"TMDBID": "123"}})
+	// uses for absent query parameters (every Query key is always populated).
+	got, err := Render(`{{ if eq .Query.IMDBID .False }}noid{{ else }}hastmdb{{ end }}`, Context{Query: map[string]string{"IMDBID": "", "TMDBID": "123"}})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
