@@ -2509,3 +2509,150 @@ func TestSearch_JSONAttributeAitherFixture(t *testing.T) {
 		t.Errorf("title = %q, want Movie A (extracted from attributes object)", releases[0].Title)
 	}
 }
+
+// TestSearch_AllowRawSearch_Gated covers the allowrawsearch gate: an empty
+// keyword-less query on an indexer without the flag fires no HTTP request.
+func TestSearch_AllowRawSearch_Gated(t *testing.T) {
+	yamlDef := `
+id: nogate
+name: NoGate
+description: allowrawsearch gate test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      inputs:
+        q: "{{ .Keywords }}"
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected HTTP request for gated empty search: %s", r.URL.String())
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if releases != nil {
+		t.Errorf("expected no releases, got %d", len(releases))
+	}
+}
+
+// TestSearch_AllowRawSearch_Flagged covers an indexer with the flag: the
+// empty-keyword browse path runs.
+func TestSearch_AllowRawSearch_Flagged(t *testing.T) {
+	yamlDef := `
+id: rawok
+name: RawOK
+description: allowrawsearch flagged test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+caps:
+  allowrawsearch: true
+search:
+  paths:
+    - path: "{{ if .Keywords }}search{{ else }}browse{{ end }}"
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`<table class="results"><tr><td><a class="title">Browse Item</a><a class="dl" href="/dl/1"></a></td></tr></table>`))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release, got %d", len(releases))
+	}
+	if gotPath != "/browse" {
+		t.Errorf("browse path = %q, want /browse", gotPath)
+	}
+}
+
+// TestSearch_AllowRawSearch_IDBypass covers media-ID queries: they bypass
+// the gate even without keywords or the flag.
+func TestSearch_AllowRawSearch_IDBypass(t *testing.T) {
+	yamlDef := `
+id: idpass
+name: IDPass
+description: allowrawsearch ID bypass test
+language: en-US
+type: public
+links:
+  - http://example.invalid/
+search:
+  paths:
+    - path: /search
+      inputs:
+        q: "{{ .Keywords }}"
+        imdb: "{{ .Query.IMDBID }}"
+      response:
+        type: html
+  rows:
+    selector: table.results tr
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.dl
+      attribute: href
+`
+	def, err := cmodel.Parse([]byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parsing fixture yaml: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<table class="results"><tr><td><a class="title">ID Item</a><a class="dl" href="/dl/1"></a></td></tr></table>`))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(def, server.URL, nil)
+	releases, err := provider.Search(context.Background(), Query{IMDBID: "tt1234567"})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("expected 1 release (ID bypasses the gate), got %d", len(releases))
+	}
+}

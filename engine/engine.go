@@ -220,6 +220,17 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 		rctx.Query["categories"] = strings.Join(mappedCategories, ",")
 	}
 
+	// Gate empty searches: without keywords or a media ID, a tracker without
+	// allowrawsearch has nothing to query (its paths branch on
+	// {{ .Keywords }} and would hit browse pages). Skip without firing any
+	// HTTP request. Prowlarr only advertises the capability in caps; this
+	// gate protects callers that pass an empty query (e.g. `search ""`).
+	if keywords == "" && q.IMDBID == "" && q.TMDBID == "" && q.TVDBID == "" &&
+		q.DoubanID == "" && q.Season == "" && q.Ep == "" && !p.def.Caps.AllowRawSearch {
+		slog.Warn("empty search skipped: indexer does not advertise allowrawsearch", "indexer", p.def.ID)
+		return nil, nil
+	}
+
 	var all []release.Release
 	var lastPathErr error
 	for _, path := range p.def.Search.Paths {
