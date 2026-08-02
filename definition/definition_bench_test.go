@@ -43,7 +43,7 @@ settings:
     default: "false"
 login:
   method: form
-  login: /login
+  path: /login
   inputs:
     username: "{{ .Config.username }}"
     password: "{{ .Config.password }}"

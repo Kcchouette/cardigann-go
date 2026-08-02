@@ -34,7 +34,7 @@ func TestLogin_FormSuccess(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "form",
-			Login:  "/login",
+			Path:  "/login",
 			Inputs: map[string]string{
 				"username": "{{ .Config.username }}",
 				"password": "{{ .Config.password }}",
@@ -67,7 +67,7 @@ func TestLogin_FormWrongCredentials(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "form",
-			Login:  "/login",
+			Path:  "/login",
 			Inputs: map[string]string{
 				"username": "{{ .Config.username }}",
 				"password": "{{ .Config.password }}",
@@ -156,7 +156,7 @@ func TestLogin_GetWithInputs(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "get",
-			Login:  "/api",
+			Path:  "/api",
 			Inputs: map[string]string{
 				"action":  "latest",
 				"passkey": "{{ .Config.passkey }}",
@@ -184,7 +184,7 @@ func TestLogin_GetWithErrorResponse(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "get",
-			Login:  "/api",
+			Path:  "/api",
 			Inputs: map[string]string{
 				"passkey": "{{ .Config.passkey }}",
 			},
@@ -218,7 +218,7 @@ func TestLogin_GetWithoutInputs(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "get",
-			Login:  "/api/test",
+			Path:  "/api/test",
 		},
 	}
 
@@ -245,7 +245,7 @@ func TestLogin_GetWithTestVerification(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "get",
-			Login:  "/api",
+			Path:  "/api",
 			Test:   &cmodel.Test{Path: "/api/status", Selector: "div.auth"},
 		},
 	}
@@ -294,7 +294,7 @@ func TestLogin_FormWithSelectorInputs(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "form",
-			Login:  "/login",
+			Path:  "/login",
 			Inputs: map[string]string{
 				"username": "{{ .Config.username }}",
 				"password": "{{ .Config.password }}",
@@ -352,7 +352,7 @@ func TestLogin_FormWithSelectorInputsFilters(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "form",
-			Login:  "/login",
+			Path:  "/login",
 			Inputs: map[string]string{
 				"username": "{{ .Config.username }}",
 			},
@@ -404,7 +404,7 @@ func TestLogin_FormWithoutSelectorInputs(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "form",
-			Login:  "/login",
+			Path:  "/login",
 			Inputs: map[string]string{
 				"username": "{{ .Config.username }}",
 				"password": "{{ .Config.password }}",
@@ -457,7 +457,7 @@ func TestLogin_FormWithOptionalSelectorInputs(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "form",
-			Login:  "/login",
+			Path:  "/login",
 			Inputs: map[string]string{
 				"username": "{{ .Config.username }}",
 			},
@@ -495,7 +495,7 @@ func TestLogin_OneURLSuccess(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "oneurl",
-			Login:  "/login/token",
+			Path:  "/login/token",
 		},
 	}
 
@@ -517,7 +517,7 @@ func TestLogin_OneURLErrorResponse(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "oneurl",
-			Login:  "/login/token",
+			Path:  "/login/token",
 			Error:  []cmodel.ErrorSelector{{Selector: "div.error"}},
 		},
 	}
@@ -553,7 +553,7 @@ func TestLogin_FormWithHeaders(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "form",
-			Login:  "/login",
+			Path:  "/login",
 			Inputs: map[string]string{
 				"username": "{{ .Config.username }}",
 				"password": "{{ .Config.password }}",
@@ -597,7 +597,7 @@ func TestLogin_FormWithCookies(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "form",
-			Login:  "/login",
+			Path:  "/login",
 			Inputs: map[string]string{
 				"username": "{{ .Config.username }}",
 				"password": "{{ .Config.password }}",
@@ -645,7 +645,7 @@ func TestLogin_FormWithSubmitPath(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method:     "form",
-			Login:      "/login-page",
+			Path:      "/login-page",
 			SubmitPath: "/submit",
 			Inputs: map[string]string{
 				"username": "{{ .Config.username }}",
@@ -698,7 +698,7 @@ func TestLogin_FormWithExplicitSelector(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "form",
-			Login:  "/login-page",
+			Path:  "/login-page",
 			Form:   "#login-form",
 			Inputs: map[string]string{
 				"username": "{{ .Config.username }}",
@@ -736,7 +736,7 @@ func TestLogin_FormSelectorNotFound(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "form",
-			Login:  "/login-page",
+			Path:  "/login-page",
 			Form:   "#nonexistent",
 			Inputs: map[string]string{
 				"username": "user",
@@ -782,7 +782,7 @@ func TestLogin_FormSelectorEmpty(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method: "form",
-			Login:  "/login",
+			Path:  "/login",
 			Form:   "",
 			Inputs: map[string]string{
 				"username": "{{ .Config.username }}",
@@ -832,7 +832,7 @@ func TestLogin_FormWithSubmitPathOverride(t *testing.T) {
 	def := cmodel.IndexerDefinition{
 		Login: cmodel.Login{
 			Method:     "form",
-			Login:      "/login-page",
+			Path:      "/login-page",
 			Form:       "#login-form",
 			SubmitPath: "/override-submit",
 			Inputs: map[string]string{

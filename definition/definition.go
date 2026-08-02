@@ -84,6 +84,10 @@ func (d IndexerDefinition) IsUsenet() bool {
 func (d IndexerDefinition) Validate() []string {
 	var warns []string
 
+	if _, legacy := d.Login.Extra["login"]; legacy {
+		warns = append(warns, "login block uses legacy 'login:' key; use 'path:' (the legacy key is ignored)")
+	}
+
 	switch d.Type {
 	case "usenet", "ddl", "streaming":
 		// explicit protocols are checked below
@@ -139,7 +143,7 @@ type Setting struct {
 // Login describes the authentication mechanism of the indexer.
 type Login struct {
 	Method         string                   `yaml:"method"`
-	Login          string                   `yaml:"login"`
+	Path           string                   `yaml:"path"` // login page path (v11 canonical key)
 	Inputs         map[string]string        `yaml:"inputs"`
 	SelectorInputs map[string]SelectorField `yaml:"selectorinputs,omitempty"`
 	Form           string                   `yaml:"form,omitempty"`
@@ -148,6 +152,7 @@ type Login struct {
 	Headers        map[string]string        `yaml:"headers,omitempty"`
 	Cookies        map[string]string        `yaml:"cookies,omitempty"`
 	SubmitPath     string                   `yaml:"submitpath,omitempty"`
+	Extra          map[string]any           `yaml:",inline"`
 }
 
 // ErrorSelector describes a selector used to detect a login failure.

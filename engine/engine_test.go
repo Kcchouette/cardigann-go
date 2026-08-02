@@ -1109,7 +1109,7 @@ links:
   - http://example.invalid/
 login:
   method: form
-  login: /login
+  path: /login
   inputs:
     username: testuser
     password: testpass

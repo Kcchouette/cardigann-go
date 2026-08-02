@@ -17,7 +17,7 @@ import (
 func loginGet(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
 	rctx := tmpl.Context{Config: config}
 
-	loginPath, err := tmpl.Render(def.Login.Login, rctx)
+	loginPath, err := tmpl.Render(def.Login.Path, rctx)
 	if err != nil {
 		return fmt.Errorf("rendering login path: %w", err)
 	}
@@ -72,7 +72,7 @@ func loginGet(ctx context.Context, client *http.Client, def cmodel.IndexerDefini
 func loginOneURL(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
 	rctx := tmpl.Context{Config: config}
 
-	loginPath, err := tmpl.Render(def.Login.Login, rctx)
+	loginPath, err := tmpl.Render(def.Login.Path, rctx)
 	if err != nil {
 		return fmt.Errorf("rendering login path: %w", err)
 	}

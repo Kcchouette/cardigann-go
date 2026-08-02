@@ -19,7 +19,7 @@ settings:
     label: Freeleech only
 login:
   method: form
-  login: /login.php
+  path: /login.php
   inputs:
     username: "{{ .Config.username }}"
     password: "{{ .Config.password }}"

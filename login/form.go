@@ -22,7 +22,7 @@ import (
 func loginForm(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
 	rctx := tmpl.Context{Config: config}
 
-	loginPath, err := tmpl.Render(def.Login.Login, rctx)
+	loginPath, err := tmpl.Render(def.Login.Path, rctx)
 	if err != nil {
 		return fmt.Errorf("rendering login path: %w", err)
 	}
@@ -113,7 +113,7 @@ func extractSelectorInputs(ctx context.Context, client *http.Client, def cmodel.
 		return result, nil
 	}
 
-	loginPath, err := tmpl.Render(def.Login.Login, rctx)
+	loginPath, err := tmpl.Render(def.Login.Path, rctx)
 	if err != nil {
 		return nil, fmt.Errorf("rendering login path: %w", err)
 	}
