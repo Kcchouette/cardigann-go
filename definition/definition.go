@@ -247,10 +247,10 @@ type ResponseInfo struct {
 
 // Rows describes how to select result rows in the response document.
 type Rows struct {
-	Selector string          `yaml:"selector"`
-	After    int             `yaml:"after"`
-	Filters  []FilterStep    `yaml:"filters"`
-	Count    *SelectorField  `yaml:"count,omitempty"` // row limit selector (e.g. JSON $.numFound)
+	Selector string         `yaml:"selector"`
+	After    int            `yaml:"after"`
+	Filters  []FilterStep   `yaml:"filters"`
+	Count    *SelectorField `yaml:"count,omitempty"` // row limit selector (e.g. JSON $.numFound)
 }
 
 // Field describes how to extract and transform a value for a result row.
