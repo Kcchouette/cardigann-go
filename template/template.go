@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"text/template"
@@ -183,12 +184,53 @@ func compile(tmplStr string) (cachedTemplate, error) {
 	if cached, ok := templateCache.Load(tmplStr); ok {
 		return cached.(cachedTemplate), nil
 	}
-	tmpl, err := template.New("cardigann").Funcs(funcMap).Parse(tmplStr)
+	tmpl, err := template.New("cardigann").Funcs(funcMap).Parse(preprocessTemplate(tmplStr))
 	// LoadOrStore to avoid overwriting a template already stored by another
 	// goroutine with the same tmplStr (both are equivalent, but we keep a
 	// single canonical instance).
 	actual, _ := templateCache.LoadOrStore(tmplStr, cachedTemplate{tmpl: tmpl, err: err})
 	return actual.(cachedTemplate), nil
+}
+
+// configHyphenRe matches `.Config.<name>` accesses; only names containing a
+// hyphen need rewriting (7 corpus defs use settings like `cat-id`).
+var configHyphenRe = regexp.MustCompile(`\.Config\.[A-Za-z0-9_-]+`)
+
+// preprocessTemplate rewrites corpus idioms the Go template parser rejects.
+// `.Config.foo-bar` (hyphenated setting names) is not valid field syntax, so
+// it becomes `(index .Config "foo-bar")`. Only action spans ({{ ... }}) are
+// touched, so literal text is never rewritten.
+func preprocessTemplate(src string) string {
+	if !strings.Contains(src, ".Config.") {
+		return src
+	}
+	var b strings.Builder
+	rest := src
+	for {
+		open := strings.Index(rest, "{{")
+		if open < 0 {
+			b.WriteString(rest)
+			break
+		}
+		b.WriteString(rest[:open+2])
+		rest = rest[open+2:]
+		close := strings.Index(rest, "}}")
+		if close < 0 {
+			b.WriteString(rest)
+			break
+		}
+		action := rest[:close]
+		b.WriteString(configHyphenRe.ReplaceAllStringFunc(action, func(m string) string {
+			name := strings.TrimPrefix(m, ".Config.")
+			if !strings.Contains(name, "-") {
+				return m
+			}
+			return fmt.Sprintf(`(index .Config %q)`, name)
+		}))
+		b.WriteString(rest[close : close+2])
+		rest = rest[close+2:]
+	}
+	return b.String()
 }
 
 // FuncMap registers the custom functions available in Cardigann templates

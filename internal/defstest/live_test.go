@@ -17,28 +17,19 @@ import (
 	"github.com/Kcchouette/cardigann-go/release"
 )
 
-// baselineParseFailures is the set of v11 definitions that could not be
-// parsed by cardigann-go on master before this fork (verified: all 16 fail
-// identically against the unmodified code — yaml.v3 rejects the `\/` escape
-// and some real defs use seq forms the schema does not model). New parse
-// failures beyond this baseline are regressions.
+// baselineParseFailures is the set of v11 definitions that still cannot be
+// parsed by cardigann-go after the v11 compliance pass. Verified against the
+// corpus: anibt uses seq-form categorymappings yaml.v3 cannot model, and the
+// others use the `\/` YAML escape that gopkg.in/yaml.v3 rejects. The 11 IDs
+// that previously failed on the login.cookies/headers map forms now parse
+// (removed from this baseline). New parse failures beyond this baseline are
+// regressions.
 var baselineParseFailures = map[string]bool{
-	"anibt":              true,
-	"arabtorrents":       true,
-	"btarg":              true,
-	"chdbits":            true,
-	"coastalcrew":        true,
-	"newretro":           true,
-	"speedmasterhd":      true,
-	"spiritofrevolution": true,
-	"swarmazon-api":      true,
-	"thebrothers":        true,
-	"thecrazyones":       true,
-	"thefallingangels":   true,
-	"theparadiese":       true,
-	"tormac":             true,
-	"torrenttrader":      true,
-	"unbreakable":        true,
+	"anibt":         true,
+	"arabtorrents":  true,
+	"btarg":         true,
+	"swarmazon-api": true,
+	"tormac":        true,
 }
 
 func TestCorpusLive_FullSweep(t *testing.T) {
@@ -59,6 +50,11 @@ func TestCorpusLive_FullSweep(t *testing.T) {
 			}
 			t.Errorf("REGRESSION: %s/%s now fails to parse: %v", raw.Version, raw.ID, err)
 			continue
+		}
+		// Legacy login: keys are ignored by the parser (v11 uses login.path);
+		// any def still carrying one would silently log in at the site root.
+		if _, legacy := def.Login.Extra["login"]; legacy {
+			t.Errorf("REGRESSION: %s/%s uses the legacy 'login:' key (use 'path:')", raw.Version, raw.ID)
 		}
 		p := engine.NewProvider(def, "http://example.invalid/", nil)
 		if proto := p.Protocol(); proto != release.ProtocolTorrent && proto != release.ProtocolUsenet {

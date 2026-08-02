@@ -15,6 +15,7 @@ import (
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
 	"github.com/Kcchouette/cardigann-go/engine"
 	"github.com/Kcchouette/cardigann-go/release"
+	tmpl "github.com/Kcchouette/cardigann-go/template"
 )
 
 // fixtureIDs returns the IDs of the committed definition fixtures.
@@ -59,6 +60,11 @@ func TestCorpusFixture_ParseAndProtocol(t *testing.T) {
 			if def.ID != id {
 				t.Errorf("definition id %q does not match fixture name %q", def.ID, id)
 			}
+			// Legacy login: keys are ignored by the parser (v11 uses
+			// login.path); a def still carrying one would log in at the site root.
+			if _, legacy := def.Login.Extra["login"]; legacy {
+				t.Errorf("%s: uses the legacy 'login:' key (use 'path:')", id)
+			}
 			p := engine.NewProvider(def, "http://example.invalid/", nil)
 			if proto := p.Protocol(); proto != release.ProtocolTorrent && proto != release.ProtocolUsenet {
 				t.Errorf("unexpected protocol %q for a v11 definition", proto)
@@ -92,5 +98,56 @@ func TestCorpusFixture_BeforeChainParses(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("expected at least one fixture with a download block (the 14 before: defs)")
+	}
+}
+
+// knownBrokenPaths lists search path templates that are broken in the corpus
+// itself (not by the fork): 1337x's TV path has a stray ')' in
+// `eq .Config.disablesort .False))`. The engine skips such paths at runtime
+// with a warning (per-path tolerance).
+var knownBrokenPaths = map[string]string{
+	"1337x": "corpus typo: extra ')' in the TV path",
+}
+
+// TestCorpusFixture_PathsRender exercises every search path template with a
+// dummy context: defstest only checks parse+protocol, so template regressions
+// (join, .True/.False/.Today, filter-as-funcs) would otherwise go unnoticed.
+func TestCorpusFixture_PathsRender(t *testing.T) {
+	rctx := tmpl.Context{
+		Config:     map[string]string{},
+		Keywords:   "test",
+		Categories: []string{},
+		Query: map[string]string{
+			"Keywords": "test", "q": "test", "IMDBID": "", "IMDBIDShort": "",
+			"TMDBID": "", "TVDBID": "", "DoubanID": "", "Season": "",
+			"Ep": "", "Year": "", "Genre": "",
+		},
+	}
+	checked := 0
+	for _, id := range fixtureIDs(t) {
+		raw, err := os.ReadFile(filepath.Join("testdata", id+".yml"))
+		if err != nil {
+			t.Fatalf("reading fixture %s: %v", id, err)
+		}
+		def, err := cmodel.Parse(raw)
+		if err != nil {
+			if _, ok := knownParseFailures[id]; ok {
+				continue
+			}
+			t.Fatalf("parse %s: %v", id, err)
+		}
+		for _, p := range def.Search.Paths {
+			if _, err := tmpl.Render(p.Path, rctx); err != nil {
+				if _, ok := knownBrokenPaths[id]; ok {
+					t.Logf("%s: skipping known-broken path: %v", id, err)
+					continue
+				}
+				t.Errorf("%s: path %q fails to render: %v", id, p.Path, err)
+			}
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("expected at least one fixture to render")
 	}
 }

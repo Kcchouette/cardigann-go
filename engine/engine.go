@@ -5,6 +5,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -143,10 +144,18 @@ func (p *Provider) httpClient(ctx context.Context) (HTTPDoer, error) {
 		p.loginErr = login.Login(ctx, p.client.HTTPClient(), p.def, p.baseURL, p.config)
 	})
 	if p.loginErr != nil {
-		return nil, fmt.Errorf("login: %w", p.loginErr)
+		return nil, &loginError{err: p.loginErr}
 	}
 	return p.client, nil
 }
+
+// loginError marks a failed login (authentication problem). It aborts the
+// whole search: every path would fail identically, and callers (e.g.
+// gowlarr's indexer test) rely on the "login:" marker to classify failures.
+type loginError struct{ err error }
+
+func (e *loginError) Error() string { return fmt.Sprintf("login: %v", e.err) }
+func (e *loginError) Unwrap() error { return e.err }
 
 // Search executes the search for all search.paths in the definition.
 //
@@ -213,6 +222,7 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 	}
 
 	var all []release.Release
+	var lastPathErr error
 	for _, path := range p.def.Search.Paths {
 		// Skip paths whose Categories list has no intersection with requested categories.
 		if len(path.Categories) > 0 && !categoriesIntersect(path.Categories, q.Categories) {
@@ -220,12 +230,35 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 		}
 		releases, err := p.searchPath(ctx, path, rctx)
 		if err != nil {
-			return nil, fmt.Errorf("search path %q: %w", path.Path, err)
+			// Explicit failures signaled by the indexer (search.error match)
+			// and login failures abort the whole search; technical per-path
+			// failures (a corpus template typo, a transient error) are
+			// skipped like Prowlarr does.
+			var se *searchError
+			var le *loginError
+			if errors.As(err, &se) || errors.As(err, &le) {
+				return nil, err
+			}
+			lastPathErr = err
+			slog.Warn("search path failed, skipping", "indexer", p.def.ID, "path", path.Path, "error", err)
+			continue
 		}
 		all = append(all, releases...)
 	}
+	// A search where every path failed still surfaces an error.
+	if len(all) == 0 && lastPathErr != nil {
+		return nil, lastPathErr
+	}
 	return all, nil
 }
+
+// searchError marks an explicit failure signaled by the indexer (a
+// search.error selector match), as opposed to a per-path technical failure.
+// Only these abort the whole search.
+type searchError struct{ err error }
+
+func (e *searchError) Error() string { return fmt.Sprintf("search error: %v", e.err) }
+func (e *searchError) Unwrap() error { return e.err }
 
 // mapCategories converts Newznab category IDs to native tracker category IDs
 // using the definition's category mappings, falling back to caps.categories
@@ -386,7 +419,7 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 	}
 
 	if err := selector.CheckErrors(string(body), p.def.Search.Error, rctx); err != nil {
-		return nil, fmt.Errorf("search error: %w", err)
+		return nil, &searchError{err: err}
 	}
 
 	return p.parseResults(ctx, string(body), path.Response.Type, rctx, rctx.Keywords)

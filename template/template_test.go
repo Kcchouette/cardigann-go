@@ -230,3 +230,16 @@ func TestRender_QueryFields(t *testing.T) {
 		})
 	}
 }
+
+func TestRender_HyphenatedConfig(t *testing.T) {
+	// Corpus settings names with hyphens (cat-id, category-id, ...) are not
+	// valid Go field syntax; the preprocessor rewrites them to index access.
+	got, err := Render(`cat={{ .Config.cat-id }}&sort={{ .Config.sort }}`, Context{Config: map[string]string{"cat-id": "7", "sort": "desc"}})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	want := "cat=7&sort=desc"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
