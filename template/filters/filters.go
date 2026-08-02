@@ -60,28 +60,29 @@ type FilterFunc func(value string, args []string) (string, error)
 
 // Registry is the table of available filters, indexed by Cardigann name.
 var Registry = map[string]FilterFunc{
-	"trim":        trim,
-	"tolower":     toLower,
-	"toupper":     toUpper,
-	"strip":       strip,
-	"replace":     replace,
-	"re_replace":  reReplace,
-	"split":       split,
-	"append":      appendFilter,
-	"prepend":     prependFilter,
-	"regexp":      regexpExtract,
-	"urldecode":   urlDecode,
-	"urlencode":   urlEncode,
-	"htmldecode":  htmlDecode,
-	"querystring": queryString,
-	"dateparse":   dateParse,
-	"jsonparse":   jsonParse,
-	"andmatch":    andMatch,
-	"timeago":     timeAgo,
-	"fuzzytime":   fuzzyTime,
-	"diacritics":  diacritics,
-	"validate":    validate,
-	"timeparse":   dateParse, // alias of dateparse
+	"trim":          trim,
+	"tolower":       toLower,
+	"toupper":       toUpper,
+	"strip":         strip,
+	"replace":       replace,
+	"re_replace":    reReplace,
+	"split":         split,
+	"append":        appendFilter,
+	"prepend":       prependFilter,
+	"regexp":        regexpExtract,
+	"urldecode":     urlDecode,
+	"urlencode":     urlEncode,
+	"htmldecode":    htmlDecode,
+	"querystring":   queryString,
+	"dateparse":     dateParse,
+	"jsonparse":     jsonParse,
+	"andmatch":      andMatch,
+	"timeago":       timeAgo,
+	"fuzzytime":     fuzzyTime,
+	"diacritics":    diacritics,
+	"validate":      validate,
+	"timeparse":     dateParse, // alias of dateparse
+	"validfilename": validFilename,
 }
 
 // Apply executes a chain of filters on a value, in order.
@@ -231,10 +232,81 @@ var dateLayouts = []string{
 	"Mon, 02 Jan 2006 15:04:05 -0700",
 }
 
+// netTokens translates .NET date format tokens (the corpus convention, e.g.
+// "ddd, dd MMM yyyy HH:mm:ss zzz") into Go reference layouts. Ordered
+// longest-first so multi-char tokens (MMMM, dddd, zzz) win over their
+// single-letter prefixes; single letters (d, H, h, M, m, s) come last.
+var netTokens = []struct{ from, to string }{
+	{"yyyy", "2006"},
+	{"MMMM", "January"},
+	{"dddd", "Monday"},
+	{"MMM", "Jan"},
+	{"ddd", "Mon"},
+	{"zzz", "-0700"},
+	{"yy", "06"},
+	{"MM", "01"},
+	{"dd", "02"},
+	{"HH", "15"},
+	{"hh", "03"},
+	{"mm", "04"},
+	{"ss", "05"},
+	{"zz", "-07"},
+	{"fff", "000"},
+	{"tt", "PM"},
+	{"K", "-07:00"},
+	{"d", "2"},
+	{"H", "15"},
+	{"h", "3"},
+	{"M", "1"},
+	{"m", "4"},
+	{"s", "5"},
+}
+
+// netToGoLayout converts a .NET date format string to a Go reference layout.
+// Single-quoted .NET literals are emitted verbatim (without the quotes), all
+// other non-token characters pass through as layout literals.
+func netToGoLayout(netLayout string) string {
+	var b strings.Builder
+	for i := 0; i < len(netLayout); {
+		if netLayout[i] == '\'' {
+			j := strings.IndexByte(netLayout[i+1:], '\'')
+			if j < 0 {
+				b.WriteString(netLayout[i+1:])
+				break
+			}
+			b.WriteString(netLayout[i+1 : i+1+j])
+			i += j + 2
+			continue
+		}
+		matched := false
+		for _, tok := range netTokens {
+			if strings.HasPrefix(netLayout[i:], tok.from) {
+				b.WriteString(tok.to)
+				i += len(tok.from)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			b.WriteByte(netLayout[i])
+			i++
+		}
+	}
+	return b.String()
+}
+
 func dateParse(v string, args []string) (string, error) {
 	layouts := dateLayouts
 	if len(args) > 0 {
-		layouts = append([]string{args[0]}, dateLayouts...)
+		// Corpus args are .NET format strings; translate to a Go layout first,
+		// then fall back to the raw arg (defs that already pass a Go layout)
+		// and the standard layout list.
+		net := netToGoLayout(args[0])
+		layouts = []string{net}
+		if net != args[0] {
+			layouts = append(layouts, args[0])
+		}
+		layouts = append(layouts, dateLayouts...)
 	}
 	for _, layout := range layouts {
 		if t, err := time.Parse(layout, v); err == nil {
@@ -416,4 +488,24 @@ func validate(v string, args []string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// validFilename sanitizes a string into a filename-safe form: characters
+// invalid on Windows/Unix (`<>:"/\|?*` plus C0 control characters) become
+// underscores; leading/trailing dots and spaces are stripped; the result is
+// guarded against collapsing to "." or "..".
+func validFilename(v string, _ []string) (string, error) {
+	var b strings.Builder
+	for _, r := range v {
+		if r < 0x20 || strings.ContainsRune(`<>:"/\|?*`, r) {
+			b.WriteRune('_')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	name := strings.Trim(b.String(), ". ")
+	if name == "." || name == ".." || name == "" {
+		name = "_"
+	}
+	return name, nil
 }

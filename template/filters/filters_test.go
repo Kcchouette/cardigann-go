@@ -104,6 +104,69 @@ func TestTimeParse_Alias(t *testing.T) {
 	}
 }
 
+func TestDateParse_NetLayout(t *testing.T) {
+	// Corpus args are .NET format strings; the translated layout must match.
+	tests := []struct {
+		name  string
+		value string
+		args  []string
+		want  string
+	}{
+		{"RFC1123Z style", "Sat, 20 Jan 2024 14:30:45 +0100", []string{"ddd, dd MMM yyyy HH:mm:ss zzz"}, "2024-01-20T14:30:45+01:00"},
+		{"slash format", "01/15/2024 09:05:07 -0700", []string{"MM/dd/yyyy HH:mm:ss zzz"}, "2024-01-15T09:05:07-07:00"},
+		{"dash format", "2024-01-15 09:05:07", []string{"yyyy-MM-dd HH:mm:ss"}, "2024-01-15T09:05:07Z"},
+		{"quoted literal", "15 January 2024", []string{"dd MMMM yyyy"}, "2024-01-15T00:00:00Z"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Apply(tt.value, []Step{{Name: "dateparse", Args: tt.args}})
+			if err != nil {
+				t.Fatalf("dateparse failed: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("dateparse = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDateParse_GoLayoutStillWorks(t *testing.T) {
+	// A def that already passes a Go layout keeps working (raw arg fallback).
+	got, err := Apply("2024-01-15 09:05:07", []Step{{Name: "dateparse", Args: []string{"2006-01-02 15:04:05"}}})
+	if err != nil {
+		t.Fatalf("dateparse failed: %v", err)
+	}
+	want := "2024-01-15T09:05:07Z"
+	if got != want {
+		t.Errorf("dateparse = %q, want %q", got, want)
+	}
+}
+
+func TestValidFilename(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"windows chars", `a/b:c*?"<>|`, "a_b_c______"},
+		{"control chars", "a\x00b\x1fc", "a_b_c"},
+		{"leading/trailing dots", "...foo...", "foo"},
+		{"dot guard", "...", "_"},
+		{"normal", "Show.S01E01.720p", "Show.S01E01.720p"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Apply(tt.value, []Step{{Name: "validfilename"}})
+			if err != nil {
+				t.Fatalf("validfilename failed: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("validfilename = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAndMatch(t *testing.T) {
 	tests := []struct {
 		name     string
