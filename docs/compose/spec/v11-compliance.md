@@ -3,7 +3,7 @@ feature: v11-compliance
 status: delivered
 updated: 2026-08-02
 branch: v11-compliance
-commits: a7e8daa..11519f3
+commits: a7e8daa..11c8f99
 ---
 
 # Cardigann v11 Compliance
@@ -37,7 +37,7 @@ Settled contracts (validated by two independent reviews before implementation):
 5. **Field filters**: args are template-rendered before execution (`template.RenderFilterSteps`); unresolved args defer via the multi-pass contract for field/rows filters, hard-error for keywordsfilters (which run after `configOnce`/rctx construction). `dateparse`: .NET-translated layout → raw Go layout → `dateLayouts`. `validfilename` registered.
 6. **Field extraction**: `case` — HTML/XML rows match CSS-selector keys against the row in document order, JSON rows match literal value keys; `"*"` only as explicit fallback; values rendered templates. `remove` — read-only `TextExcluding` (parallel extraction shares one document). `default` — rendered fallback for optional/empty extraction (unresolved defers). Fields iterate in sorted name order.
 7. **Rows**: `rows.count` is `*SelectorField` evaluated against the response document (JSON via gjson, `$.` prefix normalized), slicing after `after`. `rows.attribute` parsed only (known limitation).
-8. **Login extras**: `cookies []string` (static cookies injected before method dispatch), `headers map[string][]string` (sent on all methods), `selectors bool` (inputs resolved as CSS selectors against the login page), `captcha` block (clear `ErrLoginFailed`).
+8. **Login extras**: `cookies []string` (static cookies injected before method dispatch), `headers map[string][]string` (sent on all methods), `selectors bool` (inputs keys are CSS selectors against the login page; the matched element's `name` attribute is the field name, the value is the rendered input template — Prowlarr semantics; non-HTML login paths fall back to the selector as the field name), `captcha` block (clear `ErrLoginFailed`).
 9. **Settings/Caps**: `settings[].options` parsed (ordered StringMap); `caps.categories` used by `mapCategories` only when no `categorymappings` exist (exact numeric newznab representation match, appends the native key) — known limitation: name-based values (e.g. `{1: TV}`) unmatched without a name table.
 10. **Search**: `search.path` singular folded into `paths`; `allowEmptyInputs` overrides the empty/`"false"` filter entirely; `error[].message.text` rendered via `CheckErrors(body, sels, rctx)`; search paths skip technical failures (search.error matches and login failures abort; a fully-failed search still returns an error); hyphenated `.Config.foo-bar` rewritten to `index` access.
 
