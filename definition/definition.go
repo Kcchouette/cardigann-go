@@ -422,10 +422,16 @@ func (l *DownloadBeforeList) UnmarshalYAML(unmarshal func(any) error) error {
 
 // DownloadBefore describes an intermediate request to perform before extracting the real link.
 type DownloadBefore struct {
-	Path         string            `yaml:"path"`
-	Method       string            `yaml:"method"`
-	Inputs       map[string]string `yaml:"inputs"`
-	PathSelector *SelectorField    `yaml:"pathselector,omitempty"`
+	Path           string                   `yaml:"path"`
+	Method         string                   `yaml:"method"`
+	Inputs         map[string]string        `yaml:"inputs"`
+	SelectorInputs map[string]SelectorField `yaml:"selectorinputs,omitempty"`
+	PathSelector   *SelectorField           `yaml:"pathselector,omitempty"`
+	// OnlyIfLocked skips this step when the download selectors already match
+	// the previous response (the link is already present): used for
+	// side-effecting steps (e.g. posting a reply to unlock hidden content)
+	// that must not run again once the content is revealed.
+	OnlyIfLocked bool `yaml:"onlyiflocked,omitempty"`
 }
 
 // DownloadInfohash describes how to extract the hash and title of a torrent.

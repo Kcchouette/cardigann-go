@@ -62,7 +62,18 @@ type Provider struct {
 	loginErr   error
 	configOnce sync.Once
 	limiter    *rate.Limiter
+
+	// skipSearchDownload, when set, disables download.before resolution
+	// during Search: the chain runs only via ResolveDownloadLink (explicit
+	// download or --links requests). Used when the chain performs a
+	// side-effecting action (e.g. posting a "thanks" to unlock content).
+	skipSearchDownload bool
 }
+
+// SkipSearchDownload disables download.before resolution during Search.
+// The chain is then resolved only via ResolveDownloadLink, i.e. when the
+// user explicitly requests the links (--links) or downloads the result.
+func (p *Provider) SkipSearchDownload() { p.skipSearchDownload = true }
 
 // Def returns a copy of the indexer definition.
 func (p *Provider) Def() cmodel.IndexerDefinition { return p.def }

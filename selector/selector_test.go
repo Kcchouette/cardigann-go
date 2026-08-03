@@ -59,6 +59,34 @@ func TestHTMLDocument_NoMatch(t *testing.T) {
 	}
 }
 
+func TestHTMLDocument_AttrDecodesEntities(t *testing.T) {
+	doc, err := NewHTMLDocument(`
+		<form id="login" action="./ucp.php?mode=login&amp;sid=abc123">
+			<input type="hidden" name="form_token" value="a&amp;b&lt;c" />
+			<a href="./viewtopic.php?f=5&amp;t=42">topic</a>
+		</form>
+	`)
+	if err != nil {
+		t.Fatalf("NewHTMLDocument: %v", err)
+	}
+	formNodes, err := doc.Find("form#login")
+	if err != nil || len(formNodes) != 1 {
+		t.Fatalf("Find form: nodes=%d err=%v", len(formNodes), err)
+	}
+	action, ok := formNodes[0].Attr("action")
+	if !ok || action != "./ucp.php?mode=login&sid=abc123" {
+		t.Errorf("action not unescaped: %q (ok=%v)", action, ok)
+	}
+	anchorNodes, err := doc.Find("a[href*='viewtopic']")
+	if err != nil || len(anchorNodes) != 1 {
+		t.Fatalf("Find anchor: nodes=%d err=%v", len(anchorNodes), err)
+	}
+	href, ok := anchorNodes[0].Attr("href")
+	if !ok || href != "./viewtopic.php?f=5&t=42" {
+		t.Errorf("href not unescaped: %q (ok=%v)", href, ok)
+	}
+}
+
 func TestJSONDocument_FindArray(t *testing.T) {
 	doc, err := NewJSONDocument(`{"results":[{"title":"A","size":100},{"title":"B","size":200}]}`)
 	if err != nil {

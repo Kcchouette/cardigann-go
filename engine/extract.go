@@ -308,11 +308,13 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 		return release.Release{}, err
 	}
 
-	// Resolve download link via download block if defined
-	if p.def.Download != nil {
+	// Resolve download link via download block if defined (unless the
+	// provider opts out: some chains perform side-effecting actions such as
+	// posting a "thanks", which must only happen at explicit download time).
+	if p.def.Download != nil && !p.skipSearchDownload {
 		client, clientErr := p.httpClient(ctx)
 		if clientErr == nil {
-			dlResult, dlErr := p.resolveDownload(ctx, client, row, p.baseURL, rctx)
+			dlResult, dlErr := p.resolveDownload(ctx, client, row, p.baseURL, rctx, "")
 			if dlErr == nil && dlResult != nil {
 				if dlResult.URL != "" {
 					rel.DownloadLink = dlResult.URL

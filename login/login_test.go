@@ -59,6 +59,111 @@ func TestLogin_FormSuccess(t *testing.T) {
 	}
 }
 
+func TestLogin_ReusesExistingSession(t *testing.T) {
+	var loginHits int
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			mu.Lock()
+			loginHits++
+			mu.Unlock()
+			_, _ = w.Write([]byte(`<html><body><form id="login">...</form></body></html>`))
+		case "/profile":
+			// The definition's test: already logged in (e.g. session cookies
+			// persisted by a previous run).
+			_, _ = w.Write([]byte(`<html><body><div class="logged-in">Mon compte</div></body></html>`))
+		}
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method: "form",
+			Path:   "/login",
+			Inputs: map[string]string{
+				"username": "{{ .Config.username }}",
+				"password": "{{ .Config.password }}",
+			},
+			Test: &cmodel.Test{Path: "/profile", Selector: "div.logged-in"},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{
+		"username": "alice",
+		"password": "secret",
+	})
+	if err != nil {
+		t.Fatalf("expected login to be skipped for an already-valid session, got error: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if loginHits != 0 {
+		t.Errorf("expected login page to never be fetched (session reused), got %d hits", loginHits)
+	}
+}
+
+func TestLogin_FormRetriesOnFlakyFormInvalid(t *testing.T) {
+	var posts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`<html><body>
+<form method="post" action="/login"><input type="hidden" name="csrf" value="abc"/></form>
+</body></html>`))
+				return
+			}
+			posts++
+			if posts == 1 {
+				// Anti-bot layer intermittently rejects the first POST with a
+				// generic form error despite correct tokens.
+				_, _ = w.Write([]byte(`<html><body><div class="error">Le formulaire envoyé n'est pas valide</div></body></html>`))
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "ok", Path: "/"})
+			_, _ = w.Write([]byte(`<html><body>Bienvenue</body></html>`))
+		case "/profile":
+			if _, err := r.Cookie("session"); err == nil {
+				_, _ = w.Write([]byte(`<html><body><div class="logged-in">Mon compte</div></body></html>`))
+				return
+			}
+			_, _ = w.Write([]byte(`<html><body>Not logged in</body></html>`))
+		}
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		Login: cmodel.Login{
+			Method: "form",
+			Path:   "/login",
+			Inputs: map[string]string{
+				"username": "{{ .Config.username }}",
+				"password": "{{ .Config.password }}",
+			},
+			Error: []cmodel.ErrorSelector{{Selector: "div.error"}},
+			Test:  &cmodel.Test{Path: "/profile", Selector: "div.logged-in"},
+		},
+	}
+
+	client := &http.Client{}
+	client.Jar, _ = newJarForTest()
+
+	err := Login(context.Background(), client, def, server.URL, map[string]string{
+		"username": "alice",
+		"password": "secret",
+	})
+	if err != nil {
+		t.Fatalf("expected login to succeed after retry, got: %v", err)
+	}
+	if posts != 2 {
+		t.Errorf("expected exactly 2 login POSTs (first rejected, retry succeeds), got %d", posts)
+	}
+}
+
 func TestLogin_FormWrongCredentials(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/login" {

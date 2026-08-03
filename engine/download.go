@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
 	"github.com/Kcchouette/cardigann-go/internal/httputil"
+	"github.com/Kcchouette/cardigann-go/release"
 	"github.com/Kcchouette/cardigann-go/selector"
 	tmpl "github.com/Kcchouette/cardigann-go/template"
 	"github.com/Kcchouette/cardigann-go/template/filters"
@@ -35,9 +37,13 @@ const maxBeforeSteps = 5
 // response body. The chain soft-fails without error: a failed or missing step
 // stops the chain and extraction proceeds with the last available response,
 // so the row always survives (e.g. a one-shot "thanks" token already consumed).
+//
+// startURL, when non-empty, seeds the chain's first request (step 0 is then
+// skipped): used at download time, starting from a release's stored link.
+// row may be nil in that case.
 func (p *Provider) resolveDownload(ctx context.Context, client interface {
 	Do(*http.Request) (*http.Response, error)
-}, row selector.Node, baseURL string, rctx tmpl.Context) (*downloadResult, error) {
+}, row selector.Node, baseURL string, rctx tmpl.Context, startURL string) (*downloadResult, error) {
 	dl := p.def.Download
 	if dl == nil {
 		return nil, nil
@@ -53,22 +59,39 @@ func (p *Provider) resolveDownload(ctx context.Context, client interface {
 	// Seed DownloadUri with the row's original download link (Prowlarr
 	// semantics): before-chain templates reference the row's download URL,
 	// not an intermediate step's URL. All 12 corpus usages are at step 0.
-	if raw, ok := rctx.Result["download"]; ok && raw != "" {
+	// At download time the stored release link seeds it instead.
+	if startURL != "" {
+		if u, err := url.Parse(httputil.ResolveURL(baseURL, startURL)); err == nil {
+			rctx.DownloadUri = tmpl.NewDownloadURL(u)
+		}
+	} else if raw, ok := rctx.Result["download"]; ok && raw != "" {
 		if u, err := url.Parse(httputil.ResolveURL(baseURL, raw)); err == nil {
 			rctx.DownloadUri = tmpl.NewDownloadURL(u)
 		}
 	}
 
 	for i, step := range chain {
-		stepURL, err := resolveBeforeURL(row, baseURL, rctx, i, step, beforeResponse)
-		if err != nil {
-			return nil, fmt.Errorf("before step %d: %w", i, err)
-		}
-		if stepURL == "" {
-			// Nothing to request (missing selector match): stop the chain.
+		// onlyiflocked steps (e.g. posting a reply to unlock hidden content)
+		// are skipped when the download selectors already match the previous
+		// response: the link is already present, a side-effecting action must
+		// not run again.
+		if step.OnlyIfLocked && len(dl.Selectors) > 0 && beforeSelectorsMatch(dl.Selectors, beforeResponse) {
 			break
 		}
-
+		var stepURL string
+		if i == 0 && startURL != "" {
+			stepURL = httputil.ResolveURL(baseURL, startURL)
+		} else {
+			var err error
+			stepURL, err = resolveBeforeURL(row, baseURL, rctx, i, step, beforeResponse)
+			if err != nil {
+				return nil, fmt.Errorf("before step %d: %w", i, err)
+			}
+			if stepURL == "" {
+				// Nothing to request (missing selector match): stop the chain.
+				break
+			}
+		}
 		// Space every chain request with the plain client (the authenticated
 		// IndexerClient spaces requests internally via its RoundTripper).
 		if p.client == nil && p.limiter != nil {
@@ -77,8 +100,31 @@ func (p *Provider) resolveDownload(ctx context.Context, client interface {
 			}
 		}
 
-		body, err := p.beforeRequest(ctx, client, step, stepURL, rctx, dl.Headers)
-		if err != nil {
+		// Execute the step. onlyiflocked steps (e.g. posting an unlock reply)
+		// are retried while the site rejects the POST (generic div.error "form
+		// invalid") or fails transiently (5xx/network): a rejected POST is not
+		// applied, so re-POSTing never duplicates the action. Any other
+		// response (including a reveal) ends the retries.
+		maxAttempts := 1
+		if step.OnlyIfLocked {
+			maxAttempts = 3
+		}
+		var body string
+		var lastErr error
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			if attempt > 0 {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(time.Duration(attempt) * 750 * time.Millisecond):
+				}
+			}
+			body, lastErr = p.beforeRequest(ctx, client, step, stepURL, rctx, dl.Headers, beforeResponse)
+			if lastErr == nil && !responseHasErrorDiv(body) {
+				break
+			}
+		}
+		if lastErr != nil {
 			// Soft-fail: keep the last response and the row's raw values.
 			break
 		}
@@ -113,13 +159,15 @@ func (p *Provider) resolveDownload(ctx context.Context, client interface {
 				} else {
 					downloadURL = target.Text()
 				}
-			} else {
+			} else if row != nil {
 				extracted, err := extractSelectorFromNode(row, sel.Selector, sel.Attribute)
 				if err != nil {
 					return nil, fmt.Errorf("selector %q: %w", sel.Selector, err)
 				}
 				downloadURL = extracted
 			}
+			// row == nil (download-time resolution) with a non-before
+			// selector: nothing to extract here, try the next selector.
 
 			if len(sel.Filters) > 0 {
 				filtered, err := filters.Apply(downloadURL, toFilterSteps(sel.Filters))
@@ -195,6 +243,76 @@ func (p *Provider) resolveDownload(ctx context.Context, client interface {
 	}
 
 	return result, nil
+}
+
+// responseHasErrorDiv reports whether the response body contains a
+// div.error element (phpBB renders "form invalid" rejections that way):
+// used to retry an onlyiflocked unlock step whose POST was rejected.
+func responseHasErrorDiv(body string) bool {
+	doc, err := selector.NewHTMLDocument(body)
+	if err != nil {
+		return false
+	}
+	nodes, err := doc.Find("div.error")
+	return err == nil && len(nodes) > 0
+}
+
+// beforeSelectorsMatch reports whether any usebeforeresponse download
+// selector already matches the given response body: used to stop the before
+// chain early when the link is already present (e.g. the hidden content was
+// already revealed, so the side-effecting step must not run again).
+func beforeSelectorsMatch(selectors []cmodel.DownloadSelector, body string) bool {
+	doc, err := selector.NewHTMLDocument(body)
+	if err != nil {
+		return false
+	}
+	for _, sel := range selectors {
+		if !sel.UseBeforeResponse {
+			continue
+		}
+		if nodes, err := doc.Find(sel.Selector); err == nil && len(nodes) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// ResolveDownloadLink resolves the download.before chain for a release,
+// starting from the release's stored DownloadLink (the row's download field).
+// It is the counterpart of SkipSearchDownload: for indexers that opt out of
+// search-time resolution, the chain — which may perform a side-effecting
+// action such as posting a "thanks" to unlock hidden content — runs only
+// here, when the user explicitly requests the links.
+func (p *Provider) ResolveDownloadLink(ctx context.Context, rel release.Release) (release.Release, error) {
+	if p.def.Download == nil || rel.DownloadLink == "" {
+		return rel, nil
+	}
+	client, err := p.httpClient(ctx)
+	if err != nil {
+		return rel, err
+	}
+	rctx := tmpl.Context{Config: p.config}
+	res, err := p.resolveDownload(ctx, client, nil, p.baseURL, rctx, rel.DownloadLink)
+	if err != nil {
+		return rel, err
+	}
+	if res == nil {
+		return rel, nil
+	}
+	if res.URL != "" {
+		rel.DownloadLink = res.URL
+	}
+	if res.InfoHash != "" {
+		rel.InfoHash = res.InfoHash
+	}
+	if res.Title != "" {
+		rel.Title = res.Title
+	}
+	if res.Unlocked {
+		rel.Unlocked = true
+	}
+	rel.Hosts = DetectHosts(rel.DownloadLink)
+	return rel, nil
 }
 
 // resolveBeforeURL computes the URL of a chain step. Step 0 resolves its
@@ -273,9 +391,11 @@ func extractFromResponse(beforeResponse string, sf *cmodel.SelectorField) (strin
 
 // beforeRequest performs one chain step: a GET or POST request to stepURL,
 // applying the rendered inputs, the definition headers and a 16 MiB cap.
+// beforeResponse is the previous step's body: step selectorinputs are
+// extracted from it (e.g. CSRF tokens of a form to submit).
 func (p *Provider) beforeRequest(ctx context.Context, client interface {
 	Do(*http.Request) (*http.Response, error)
-}, step cmodel.DownloadBefore, stepURL string, rctx tmpl.Context, headers map[string][]string) (string, error) {
+}, step cmodel.DownloadBefore, stepURL string, rctx tmpl.Context, headers map[string][]string, beforeResponse string) (string, error) {
 	method := strings.ToUpper(step.Method)
 	if method == "" {
 		method = http.MethodGet
@@ -285,6 +405,18 @@ func (p *Provider) beforeRequest(ctx context.Context, client interface {
 	renderedInputs, _, err := renderInputs(step.Inputs, rctx)
 	if err != nil {
 		return "", err
+	}
+	// Step selectorinputs: extract hidden field values from the previous
+	// response and merge (they override static inputs on key collision).
+	for name, sf := range step.SelectorInputs {
+		if beforeResponse == "" {
+			continue
+		}
+		v, err := extractFromResponse(beforeResponse, &sf)
+		if err != nil || v == "" {
+			continue
+		}
+		renderedInputs[name] = v
 	}
 
 	var req *http.Request

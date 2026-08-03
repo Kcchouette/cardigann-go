@@ -170,3 +170,28 @@ func (c *IndexerClient) Do(req *http.Request) (*http.Response, error) {
 // HTTPClient returns the underlying *http.Client for direct reuse
 // (e.g., by the Cardigann engine or the login module).
 func (c *IndexerClient) HTTPClient() *http.Client { return c.httpClient }
+
+// WrapUserAgent returns a RoundTripper that sets the given User-Agent on
+// requests that don't already carry one. base is returned as-is when
+// userAgent is empty. The request is cloned before mutation, as required by
+// http.RoundTripper.
+func WrapUserAgent(base http.RoundTripper, userAgent string) http.RoundTripper {
+	if userAgent == "" {
+		return base
+	}
+	return &userAgentTransport{base: base, userAgent: userAgent}
+}
+
+type userAgentTransport struct {
+	base      http.RoundTripper
+	userAgent string
+}
+
+func (t *userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("User-Agent") != "" {
+		return t.base.RoundTrip(req)
+	}
+	r := req.Clone(req.Context())
+	r.Header.Set("User-Agent", t.userAgent)
+	return t.base.RoundTrip(r)
+}

@@ -1160,6 +1160,7 @@ search:
 	var requestLog []string
 	var receivedCSRF string
 	var receivedUsername string
+	var loggedIn bool
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1177,6 +1178,7 @@ search:
 </body></html>`))
 			case http.MethodPost:
 				requestLog = append(requestLog, "POST /login")
+				loggedIn = true
 				buf := make([]byte, 4096)
 				n, _ := r.Body.Read(buf)
 				body := string(buf[:n])
@@ -1194,6 +1196,12 @@ search:
 		case "/check":
 			requestLog = append(requestLog, "GET /check")
 			w.Header().Set("Content-Type", "text/html")
+			if !loggedIn {
+				// Session not authenticated yet: the login pre-check fails
+				// and the form login flow runs.
+				_, _ = w.Write([]byte(`<html><body><div class="not-logged">Login required</div></body></html>`))
+				return
+			}
 			_, _ = w.Write([]byte(`<html><body><div class="logged-in">Welcome</div></body></html>`))
 		case "/search":
 			requestLog = append(requestLog, "GET /search")
@@ -1222,18 +1230,22 @@ search:
 		t.Fatalf("Search returned error: %v", err)
 	}
 
-	// Verify login flow: GET /login → POST /login → GET /check → GET /search
-	if len(requestLog) < 4 {
-		t.Fatalf("expected at least 4 requests, got %d: %v", len(requestLog), requestLog)
+	// Verify login flow: session pre-check (GET /check fails) → GET /login →
+	// POST /login → GET /check (verify) → GET /search
+	if len(requestLog) < 5 {
+		t.Fatalf("expected at least 5 requests, got %d: %v", len(requestLog), requestLog)
 	}
-	if requestLog[0] != "GET /login" {
-		t.Errorf("expected first request 'GET /login', got %q", requestLog[0])
+	if requestLog[0] != "GET /check" {
+		t.Errorf("expected first request 'GET /check' (session pre-check), got %q", requestLog[0])
 	}
-	if requestLog[1] != "POST /login" {
-		t.Errorf("expected second request 'POST /login', got %q", requestLog[1])
+	if requestLog[1] != "GET /login" {
+		t.Errorf("expected second request 'GET /login', got %q", requestLog[1])
 	}
-	if requestLog[2] != "GET /check" {
-		t.Errorf("expected third request 'GET /check', got %q", requestLog[2])
+	if requestLog[2] != "POST /login" {
+		t.Errorf("expected third request 'POST /login', got %q", requestLog[2])
+	}
+	if requestLog[3] != "GET /check" {
+		t.Errorf("expected fourth request 'GET /check' (verify), got %q", requestLog[3])
 	}
 
 	if receivedCSRF != "abc123csrf" {

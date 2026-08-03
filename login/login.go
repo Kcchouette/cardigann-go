@@ -6,12 +6,14 @@ package login
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
 )
@@ -34,13 +36,22 @@ func Login(ctx context.Context, client *http.Client, def cmodel.IndexerDefinitio
 			return err
 		}
 	}
+	// Reuse an existing authenticated session: when the definition's login
+	// test already passes (e.g. session cookies persisted by a previous run),
+	// skip login entirely. Some sites (phpBB) redirect the login page away
+	// when already logged in, so the login form would not be found there.
+	if def.Login.Test != nil && def.Login.Test.Path != "" && def.Login.Test.Selector != "" {
+		if err := verifyTest(ctx, client, baseURL, def, *def.Login.Test); err == nil {
+			return nil
+		}
+	}
 	switch def.Login.Method {
 	case "", "none":
 		return nil
 	case "cookie":
 		return loginCookie(client, baseURL, config)
 	case "form":
-		return loginForm(ctx, client, def, baseURL, config)
+		return retryFormLogin(ctx, client, def, baseURL, config)
 	case "post":
 		return loginPost(ctx, client, def, baseURL, config)
 	case "get":
@@ -50,6 +61,35 @@ func Login(ctx context.Context, client *http.Client, def cmodel.IndexerDefinitio
 	default:
 		return fmt.Errorf("login method %q not supported yet", def.Login.Method)
 	}
+}
+
+// retryFormLogin performs the form login with a few attempts: some sites'
+// anti-bot layer intermittently rejects the login POST with a generic
+// "form invalid" response despite correct CSRF tokens; a fresh extraction
+// and POST succeeds shortly after. Only ErrLoginFailed (form rejected or
+// post-login verification failed) is retried; hard errors pass through.
+func retryFormLogin(ctx context.Context, client *http.Client, def cmodel.IndexerDefinition, baseURL string, config map[string]string) error {
+	const attempts = 3
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(i) * 500 * time.Millisecond):
+			}
+		}
+		err := loginForm(ctx, client, def, baseURL, config)
+		if err == nil {
+			return nil
+		}
+		var lf *ErrLoginFailed
+		if !errors.As(err, &lf) {
+			return err
+		}
+		lastErr = err
+	}
+	return lastErr
 }
 
 // jarInitMu protects the read-then-write of client.Jar in loginCookie

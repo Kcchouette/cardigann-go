@@ -49,7 +49,7 @@ func TestResolveDownload_SimpleSelectors(t *testing.T) {
 		Query:    map[string]string{"Keywords": "test"},
 	}
 
-	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx)
+	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx, "")
 	if err != nil {
 		t.Fatalf("resolveDownload returned error: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestResolveDownload_BeforePostPath(t *testing.T) {
 		Result:   map[string]string{"details_id": "123"},
 	}
 
-	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx)
+	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx, "")
 	if err != nil {
 		t.Fatalf("resolveDownload returned error: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestResolveDownload_BeforePathSelector(t *testing.T) {
 		Query:    map[string]string{"Keywords": "test"},
 	}
 
-	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx)
+	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx, "")
 	if err != nil {
 		t.Fatalf("resolveDownload returned error: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestResolveDownload_Headers(t *testing.T) {
 		Query:    map[string]string{"Keywords": "test"},
 	}
 
-	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx)
+	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx, "")
 	if err != nil {
 		t.Fatalf("resolveDownload returned error: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestResolveDownload_Infohash(t *testing.T) {
 		Query:    map[string]string{"Keywords": "test"},
 	}
 
-	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx)
+	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx, "")
 	if err != nil {
 		t.Fatalf("resolveDownload returned error: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestResolveDownload_SelectorFilters(t *testing.T) {
 		Query:    map[string]string{"Keywords": "test"},
 	}
 
-	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx)
+	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx, "")
 	if err != nil {
 		t.Fatalf("resolveDownload returned error: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestResolveDownload_NoDefinition(t *testing.T) {
 		Query:    map[string]string{"Keywords": "test"},
 	}
 
-	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx)
+	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx, "")
 	if err != nil {
 		t.Fatalf("resolveDownload returned error: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestResolveDownload_BeforeGetPath(t *testing.T) {
 		Result:   map[string]string{"page_id": "42"},
 	}
 
-	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx)
+	result, err := provider.resolveDownload(context.Background(), server.Client(), row, server.URL, rctx, "")
 	if err != nil {
 		t.Fatalf("resolveDownload returned error: %v", err)
 	}

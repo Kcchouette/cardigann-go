@@ -2,6 +2,7 @@ package selector
 
 import (
 	"fmt"
+	stdhtml "html"
 	"strings"
 	"sync"
 
@@ -116,8 +117,15 @@ func (n *htmlNode) TextExcluding(selectors []string) string {
 	return strings.TrimSpace(b.String())
 }
 
+// Attr returns the node's attribute value with HTML character references
+// decoded (x/net/html keeps attribute values raw, so e.g. a href containing
+// &amp; must be unescaped before being used as a URL).
 func (n *htmlNode) Attr(name string) (string, bool) {
-	return n.sel.Attr(name)
+	v, ok := n.sel.Attr(name)
+	if !ok {
+		return "", false
+	}
+	return stdhtml.UnescapeString(v), true
 }
 
 // Find re-applies a CSS selector relative to this node (sub-selecting

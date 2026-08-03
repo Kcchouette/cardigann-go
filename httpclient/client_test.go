@@ -291,3 +291,61 @@ func TestIndexerClient_NoRetryOn4xx(t *testing.T) {
 		t.Errorf("expected exactly 1 attempt (no retry on 4xx), got %d", attempts)
 	}
 }
+
+func TestWrapUserAgent_SetsDefaultUA(t *testing.T) {
+	var gotUA string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.UserAgent()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client, err := New(Options{IndexerID: "ua-idx"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	client.HTTPClient().Transport = WrapUserAgent(client.HTTPClient().Transport, "gowlarr-test/1.0")
+
+	req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+	if _, err := client.Do(req); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if gotUA != "gowlarr-test/1.0" {
+		t.Errorf("expected User-Agent %q on the wire, got %q", "gowlarr-test/1.0", gotUA)
+	}
+}
+
+func TestWrapUserAgent_PreservesExistingUA(t *testing.T) {
+	var gotUA string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.UserAgent()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client, err := New(Options{IndexerID: "ua-idx"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	client.HTTPClient().Transport = WrapUserAgent(client.HTTPClient().Transport, "gowlarr-test/1.0")
+
+	req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+	req.Header.Set("User-Agent", "custom-agent/2.0")
+	if _, err := client.Do(req); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if gotUA != "custom-agent/2.0" {
+		t.Errorf("expected caller-set User-Agent %q to win, got %q", "custom-agent/2.0", gotUA)
+	}
+}
+
+func TestWrapUserAgent_EmptyUAIsNoop(t *testing.T) {
+	client, err := New(Options{IndexerID: "ua-idx"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	base := client.HTTPClient().Transport
+	if wrapped := WrapUserAgent(base, ""); wrapped != base {
+		t.Errorf("expected WrapUserAgent with empty UA to return base transport unchanged")
+	}
+}
