@@ -429,7 +429,9 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 		}
 	}
 
-	applySearchHeaders(req, p.def.Search.Headers, rctx)
+	if err := applySearchHeaders(req, p.def.Search.Headers, rctx); err != nil {
+		return nil, err
+	}
 
 	client, err := p.httpClient(ctx)
 	if err != nil {
@@ -459,16 +461,17 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 
 // applySearchHeaders renders the definition search headers (e.g.
 // `Authorization: Bearer {{ .Config.apikey }}`) onto a request. Shared by
-// the search paths and the search.before steps.
-func applySearchHeaders(req *http.Request, headers map[string][]string, rctx tmpl.Context) {
+// the search paths and the search.before steps. A template error fails the
+// request (a broken header must not be silently dropped).
+func applySearchHeaders(req *http.Request, headers map[string][]string, rctx tmpl.Context) error {
 	for header, vals := range headers {
 		for _, v := range vals {
 			rendered, err := tmpl.Render(v, rctx)
 			if err != nil {
-				slog.Warn("rendering search header", "header", header, "error", err)
-				continue
+				return fmt.Errorf("rendering header %q: %w", header, err)
 			}
 			req.Header.Add(header, rendered)
 		}
 	}
+	return nil
 }

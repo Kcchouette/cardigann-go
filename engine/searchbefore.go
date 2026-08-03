@@ -93,7 +93,7 @@ func (p *Provider) runSearchBefore(ctx context.Context, rctx *tmpl.Context, step
 	if err != nil {
 		return false, fmt.Errorf("rendering before inputs: %w", err)
 	}
-	values := filterInputs(rendered, false)
+	values := filterInputs(rendered, p.def.Search.AllowEmptyInputs)
 	appendRawParams(values, rawParams)
 
 	var req *http.Request
@@ -119,7 +119,9 @@ func (p *Provider) runSearchBefore(ctx context.Context, rctx *tmpl.Context, step
 		}
 	}
 
-	applySearchHeaders(req, p.def.Search.Headers, *rctx)
+	if err := applySearchHeaders(req, p.def.Search.Headers, *rctx); err != nil {
+		return false, fmt.Errorf("rendering before headers: %w", err)
+	}
 
 	client, err := p.httpClient(ctx)
 	if err != nil {

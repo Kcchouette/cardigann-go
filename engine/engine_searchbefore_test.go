@@ -186,27 +186,22 @@ func TestSearchBefore_NoTitleMatch_ReturnsEmptyWithoutSearchRequest(t *testing.T
 }
 
 func TestSearchBefore_HTTPFailure_AbortsWithError(t *testing.T) {
-	server, _, searchCalls := twoStepServer(t, ``, liensFixture)
-	defer server.Close()
-	// Override: the before endpoint returns 500 (twoStepServer writes the
-	// title body but we can force failure by closing before... use a 500 below).
-	_ = searchCalls
-
-	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/titles" {
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"message":"Unauthenticated."}`))
-			return
+	// The before step (/api/v1/titles) answers 401: the search must abort
+	// with a visible error (a wrong/expired token is not "no results").
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/titles" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
-		w.WriteHeader(http.StatusTeapot)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"Unauthenticated."}`))
 	}))
-	defer server2.Close()
+	defer server.Close()
 
-	def, err := cmodel.Parse([]byte(fmt.Sprintf(searchBeforeYAML, server2.URL)))
+	def, err := cmodel.Parse([]byte(fmt.Sprintf(searchBeforeYAML, server.URL)))
 	if err != nil {
 		t.Fatalf("parsing fixture yaml: %v", err)
 	}
-	provider := NewProvider(def, server2.URL, map[string]string{"apikey": "sekret"})
+	provider := NewProvider(def, server.URL, map[string]string{"apikey": "sekret"})
 
 	if _, err := provider.Search(context.Background(), Query{Keywords: "house of the dragon"}); err == nil {
 		t.Fatal("Search must abort with an error on before-step HTTP failure")
