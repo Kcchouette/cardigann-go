@@ -48,12 +48,13 @@ func RenderFilterSteps(steps []cmodel.FilterStep, rctx Context) ([]filters.Step,
 
 // Context is the rendering context exposed to Cardigann templates.
 type Context struct {
-	Config      map[string]string // user configuration values (settings)
-	Keywords    string            // raw search terms
-	Categories  []string          // native category IDs mapped from Newznab IDs
-	Query       map[string]string // additional query parameters (categories, season, etc.)
-	Result      map[string]string // values already extracted for the current result row
-	DownloadUri *DownloadURL      // resolved download URL (usable in templates)
+	Config      map[string]string            // user configuration values (settings)
+	Keywords    string                       // raw search terms
+	Categories  []string                     // native category IDs mapped from Newznab IDs
+	Query       map[string]string            // additional query parameters (categories, season, etc.)
+	Result      map[string]string            // values already extracted for the current result row
+	DownloadUri *DownloadURL                 // resolved download URL (usable in templates)
+	Before      map[string]map[string]string // values captured by search.before steps ({{ .Before.<name>.<key> }})
 }
 
 // DownloadURL exposes .NET System.Uri-style members to Cardigann templates

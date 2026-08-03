@@ -28,18 +28,9 @@ import (
 const maxParallelExtract = 8
 
 func (p *Provider) parseResults(ctx context.Context, body string, responseType string, rctx tmpl.Context, keywords string) ([]release.Release, error) {
-	var doc selector.Document
-	var err error
-	switch responseType {
-	case "json":
-		doc, err = selector.NewJSONDocument(body)
-	case "xml":
-		doc, err = selector.NewXMLDocument(body)
-	default:
-		doc, err = selector.NewHTMLDocument(body)
-	}
+	doc, err := newDocument(responseType, body)
 	if err != nil {
-		return nil, fmt.Errorf("parsing response body: %w", err)
+		return nil, err
 	}
 
 	rows, err := doc.Find(p.def.Search.Rows.Selector)
@@ -485,6 +476,13 @@ func fieldsToRelease(values map[string]string) (release.Release, error) {
 	if v, ok := values["date"]; ok {
 		if parsed, err := time.Parse(time.RFC3339, v); err == nil {
 			rel.PublishDate = parsed
+		}
+	}
+	// The category field carries the native (or case-mapped) category id:
+	// propagate it to the release so consumers can filter/display it.
+	if v, ok := values["category"]; ok {
+		if parsed, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			rel.Categories = []int{parsed}
 		}
 	}
 	return rel, nil

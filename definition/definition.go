@@ -96,6 +96,20 @@ func (d IndexerDefinition) Validate() []string {
 		warns = append(warns, fmt.Sprintf("unknown response encoding %q, reading as UTF-8", d.Encoding))
 	}
 
+	for i, step := range d.Search.Before {
+		if step.Name == "" {
+			warns = append(warns, fmt.Sprintf("search.before step %d has no name: its captured values are not reachable from templates", i))
+		} else if !validBeforeName(step.Name) {
+			warns = append(warns, fmt.Sprintf("search.before step %d has invalid name %q (allowed: letters, digits, underscore)", i, step.Name))
+		}
+		if step.Path == "" {
+			warns = append(warns, fmt.Sprintf("search.before step %d has no path", i))
+		}
+		if len(step.Selectors) == 0 {
+			warns = append(warns, fmt.Sprintf("search.before step %d captures no selectors", i))
+		}
+	}
+
 	switch d.Type {
 	case "usenet", "ddl", "streaming":
 		// explicit protocols are checked below
@@ -123,6 +137,22 @@ func (d IndexerDefinition) Validate() []string {
 		}
 	}
 	return warns
+}
+
+// validBeforeName reports whether a search.before step name is a safe
+// template key: letters, digits and underscores only. Hyphens would break
+// the {{ .Before.<name>.<key> }} access (the template preprocessor only
+// rewrites .Config keys).
+func validBeforeName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // Caps describes the search/category capabilities of the indexer.
@@ -196,6 +226,7 @@ type Test struct {
 // Search describes how to perform a search and parse the results.
 type Search struct {
 	Paths            []SearchPath        `yaml:"paths"`
+	Before           SearchBeforeList    `yaml:"before,omitempty"`
 	Rows             Rows                `yaml:"rows"`
 	Fields           map[string]Field    `yaml:"fields"`
 	KeywordsFilters  []FilterStep        `yaml:"keywordsfilters"`
@@ -211,6 +242,7 @@ func (s *Search) UnmarshalYAML(unmarshal func(any) error) error {
 	type rawSearch struct {
 		Path             string              `yaml:"path"`
 		Paths            []SearchPath        `yaml:"paths"`
+		Before           SearchBeforeList    `yaml:"before,omitempty"`
 		Rows             Rows                `yaml:"rows"`
 		Fields           map[string]Field    `yaml:"fields"`
 		KeywordsFilters  []FilterStep        `yaml:"keywordsfilters"`
@@ -227,6 +259,7 @@ func (s *Search) UnmarshalYAML(unmarshal func(any) error) error {
 	if raw.Path != "" && len(s.Paths) == 0 {
 		s.Paths = []SearchPath{{Path: raw.Path}}
 	}
+	s.Before = raw.Before
 	s.Rows = raw.Rows
 	s.Fields = raw.Fields
 	s.KeywordsFilters = raw.KeywordsFilters
@@ -249,6 +282,41 @@ type SearchPath struct {
 // ResponseInfo describes the expected content type of the response (html by default, json, xml).
 type ResponseInfo struct {
 	Type string `yaml:"type"`
+}
+
+// SearchBeforeList is a chain of pre-search requests whose extracted values
+// are exposed to the search path templates as {{ .Before.<name>.<key> }}.
+// It accepts a single SearchBefore mapping or a sequence of them.
+type SearchBeforeList []SearchBefore
+
+// UnmarshalYAML accepts both the single-mapping form and a sequence, because
+// yaml.v3 does not coerce a single mapping into a slice. The failed single
+// attempt leaves no poisoned error state (yaml.v3 resets per call).
+func (l *SearchBeforeList) UnmarshalYAML(unmarshal func(any) error) error {
+	var single SearchBefore
+	if err := unmarshal(&single); err == nil {
+		*l = SearchBeforeList{single}
+		return nil
+	}
+	var list []SearchBefore
+	if err := unmarshal(&list); err != nil {
+		return err
+	}
+	*l = SearchBeforeList(list)
+	return nil
+}
+
+// SearchBefore describes a request executed before the search paths. Each
+// named selector captures a value from the response into the template
+// context as {{ .Before.<name>.<selectorKey> }} (e.g. a title id resolved
+// from a keyword search, later used to build the real search path).
+type SearchBefore struct {
+	Name     string                     `yaml:"name"` // template prefix (.Before.<name>.*), [A-Za-z0-9_]+
+	Path     string                     `yaml:"path"` // template, rendered with the current context
+	Method   string                     `yaml:"method"` // get | post
+	Inputs   map[string]string          `yaml:"inputs"`
+	Response ResponseInfo               `yaml:"response"`
+	Selectors map[string]SelectorField  `yaml:"selectors"`
 }
 
 // Rows describes how to select result rows in the response document.

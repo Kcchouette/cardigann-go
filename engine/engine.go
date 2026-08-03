@@ -242,6 +242,26 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 		return nil, nil
 	}
 
+	// Run the search.before chain: pre-search requests whose captured values
+	// feed the search path templates ({{ .Before.<name>.<key> }}), e.g. a
+	// title id resolved from a keyword search. An HTTP/auth failure aborts
+	// the search with an error; a successful step whose required selector
+	// matches nothing is a legitimate "no results" outcome.
+	if len(p.def.Search.Before) > 0 {
+		rctx.Before = map[string]map[string]string{}
+		for i := range p.def.Search.Before {
+			step := p.def.Search.Before[i]
+			captured, err := p.runSearchBefore(ctx, &rctx, step)
+			if err != nil {
+				return nil, fmt.Errorf("search.before step %d (%s): %w", i, step.Name, err)
+			}
+			if !captured {
+				slog.Warn("search.before step matched nothing, returning no results", "indexer", p.def.ID, "step", step.Name)
+				return nil, nil
+			}
+		}
+	}
+
 	var all []release.Release
 	var lastPathErr error
 	for _, path := range p.def.Search.Paths {
@@ -409,16 +429,7 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 		}
 	}
 
-	// Apply definition headers (e.g. Authorization: Bearer {{ .Config.apikey }})
-	for header, vals := range p.def.Search.Headers {
-		for _, v := range vals {
-			rendered, err := tmpl.Render(v, rctx)
-			if err != nil {
-				return nil, fmt.Errorf("rendering header %q: %w", header, err)
-			}
-			req.Header.Add(header, rendered)
-		}
-	}
+	applySearchHeaders(req, p.def.Search.Headers, rctx)
 
 	client, err := p.httpClient(ctx)
 	if err != nil {
@@ -444,4 +455,20 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 	}
 
 	return p.parseResults(ctx, string(body), path.Response.Type, rctx, rctx.Keywords)
+}
+
+// applySearchHeaders renders the definition search headers (e.g.
+// `Authorization: Bearer {{ .Config.apikey }}`) onto a request. Shared by
+// the search paths and the search.before steps.
+func applySearchHeaders(req *http.Request, headers map[string][]string, rctx tmpl.Context) {
+	for header, vals := range headers {
+		for _, v := range vals {
+			rendered, err := tmpl.Render(v, rctx)
+			if err != nil {
+				slog.Warn("rendering search header", "header", header, "error", err)
+				continue
+			}
+			req.Header.Add(header, rendered)
+		}
+	}
 }
