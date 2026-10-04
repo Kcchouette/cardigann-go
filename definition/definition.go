@@ -148,7 +148,9 @@ func validBeforeName(name string) bool {
 		return false
 	}
 	for _, r := range name {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_') {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+		default:
 			return false
 		}
 	}
@@ -311,12 +313,12 @@ func (l *SearchBeforeList) UnmarshalYAML(unmarshal func(any) error) error {
 // context as {{ .Before.<name>.<selectorKey> }} (e.g. a title id resolved
 // from a keyword search, later used to build the real search path).
 type SearchBefore struct {
-	Name     string                     `yaml:"name"` // template prefix (.Before.<name>.*), [A-Za-z0-9_]+
-	Path     string                     `yaml:"path"` // template, rendered with the current context
-	Method   string                     `yaml:"method"` // get | post
-	Inputs   map[string]string          `yaml:"inputs"`
-	Response ResponseInfo               `yaml:"response"`
-	Selectors map[string]SelectorField  `yaml:"selectors"`
+	Name      string                   `yaml:"name"`   // template prefix (.Before.<name>.*), [A-Za-z0-9_]+
+	Path      string                   `yaml:"path"`   // template, rendered with the current context
+	Method    string                   `yaml:"method"` // get | post
+	Inputs    map[string]string        `yaml:"inputs"`
+	Response  ResponseInfo             `yaml:"response"`
+	Selectors map[string]SelectorField `yaml:"selectors"`
 }
 
 // Rows describes how to select result rows in the response document.
