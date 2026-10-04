@@ -16,8 +16,8 @@ import (
 // a keyword lookup resolves a title id, then the search path lists the title's
 // DDL liens. %s is replaced by the test server base URL.
 const searchBeforeYAML = `
-id: hydraddl
-name: Hydra DDL
+id: ddl-demo
+name: DDL Demo
 description: fixture for search.before
 language: fr-FR
 type: ddl
@@ -67,9 +67,9 @@ search:
         movie: 2000
         "*": 8000
     details:
-      text: "https://hydracker.com/titles/{{ .Before.title.id }}"
+      text: "https://example.invalid/titles/{{ .Before.title.id }}"
     download:
-      text: '{{ if eq .Result._full_saison "1" }}https://hydracker.com/titles/{{ .Before.title.id }}/season/{{ .Result._season }}/download{{ else }}https://hydracker.com/titles/{{ .Before.title.id }}/season/{{ .Result._season }}/episode/{{ .Result._episode }}/download{{ end }}'
+      text: '{{ if eq .Result._full_saison "1" }}https://example.invalid/titles/{{ .Before.title.id }}/season/{{ .Result._season }}/download{{ else }}https://example.invalid/titles/{{ .Before.title.id }}/season/{{ .Result._season }}/episode/{{ .Result._episode }}/download{{ end }}'
 `
 
 const liensFixture = `{"liens":[
@@ -141,10 +141,10 @@ func TestSearchBefore_TwoStepJSON(t *testing.T) {
 	if len(ep.Categories) != 1 || ep.Categories[0] != 5000 {
 		t.Errorf("episode categories = %v, want [5000]", ep.Categories)
 	}
-	if ep.Details != "https://hydracker.com/titles/179751" {
+	if ep.Details != "https://example.invalid/titles/179751" {
 		t.Errorf("episode details = %q", ep.Details)
 	}
-	if ep.DownloadLink != "https://hydracker.com/titles/179751/season/1/episode/1/download" {
+	if ep.DownloadLink != "https://example.invalid/titles/179751/season/1/episode/1/download" {
 		t.Errorf("episode download = %q", ep.DownloadLink)
 	}
 
@@ -155,7 +155,7 @@ func TestSearchBefore_TwoStepJSON(t *testing.T) {
 	if season.Size != 19022414451 {
 		t.Errorf("season size = %d, want 19022414451", season.Size)
 	}
-	if season.DownloadLink != "https://hydracker.com/titles/179751/season/2/download" {
+	if season.DownloadLink != "https://example.invalid/titles/179751/season/2/download" {
 		t.Errorf("season download = %q", season.DownloadLink)
 	}
 }
