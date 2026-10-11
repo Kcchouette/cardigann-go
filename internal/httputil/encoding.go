@@ -13,7 +13,7 @@ import (
 // knownEncodings maps normalized (lowercase) definition `encoding:` values to
 // their decoder. UTF-8/utf8 are intentionally absent: the decoder is nil and
 // the body passes through unchanged. TIS-620 has no decoder in
-// golang.org/x/text v0.40.0 (no thaitext package, ianaindex returns nil), so
+// golang.org/x/text (no thaitext package, ianaindex returns nil), so
 // it is treated as unknown: passthrough + a Validate() warning.
 var knownEncodings = map[string]encoding.Encoding{
 	"windows-1251": charmap.Windows1251,
