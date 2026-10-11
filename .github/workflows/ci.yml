@@ -6,19 +6,29 @@ on:
   pull_request:
     branches: [master, main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
-        go-version: ['1.23', '1.24', '1.25']
+        go-version: ['1.26.x', '1.27.x']
+    # Leg 1.26.x: GOTOOLCHAIN=auto → télécharge 1.27 (toolchain-switching
+    # consommateur). Leg 1.27.x: local → sémantique native honnête.
+    env:
+      GOTOOLCHAIN: ${{ startsWith(matrix.go-version, '1.27') && 'local' || 'auto' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go-version }}
+          cache: true
 
       - name: Build
         run: go build ./...
@@ -26,26 +36,58 @@ jobs:
       - name: Format check
         run: make fmt-check
 
-      - name: Test
-        run: go test -v ./...
-
+      # go test -race subsume go test (couvre aussi l'exécution)
       - name: Test (race)
         run: go test -race ./...
 
       - name: Vet
         run: go vet ./...
 
+      # Uniquement sur la leg 1.27 (tidy idempotent)
+      - name: Check go mod tidy
+        if: startsWith(matrix.go-version, '1.27')
+        run: go mod tidy && git diff --exit-code go.mod go.sum
+
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version: '1.27.x'
+          cache: true
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.14.0
+
+      # v2: `run` n'exécute pas les formatters — fmt --diff les applique en dry-run
+      - name: golangci-lint fmt check
+        run: golangci-lint fmt --diff
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+          cache: true
+
+      - name: Test with coverage
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Coverage total
+        run: go tool cover -func=coverage.out | tail -1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage.out
