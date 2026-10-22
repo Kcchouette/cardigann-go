@@ -349,3 +349,50 @@ func TestWrapUserAgent_EmptyUAIsNoop(t *testing.T) {
 		t.Errorf("expected WrapUserAgent with empty UA to return base transport unchanged")
 	}
 }
+
+// TestBuildTransport_ProxyPathsForceHTTP2 pins the fix for the shared-transport
+// Clone footgun: Clone() inherits the source's post-auto-setup TLSClientConfig
+// (ALPN h2) but not its TLSNextProto map, so without ForceAttemptHTTP2 the
+// proxy-path transport advertises h2 via ALPN while reading HTTP/1.1 —
+// h2-speaking servers then fail with "malformed HTTP response". SOCKS5 also
+// installs a custom DialContext, which disables HTTP/2 unless forced.
+func TestBuildTransport_ProxyPathsForceHTTP2(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		proxy string
+	}{
+		{"http", "http://127.0.0.1:3128"},
+		{"https", "https://127.0.0.1:3128"},
+		{"socks5", "socks5://127.0.0.1:1080"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr, err := buildTransport(tc.proxy)
+			if err != nil {
+				t.Fatalf("buildTransport(%q): %v", tc.proxy, err)
+			}
+			ht, ok := tr.(*http.Transport)
+			if !ok {
+				t.Fatalf("expected *http.Transport, got %T", tr)
+			}
+			if !ht.ForceAttemptHTTP2 {
+				t.Error("ForceAttemptHTTP2 = false, want true (h2/ALPN hybrid clone bug)")
+			}
+		})
+	}
+}
+
+// TestBuildTransport_NoProxySharesTunedTransport documents the no-proxy path:
+// the package-level transport is returned as-is (no Clone), so HTTP/2 is
+// enabled by the stdlib default and ForceAttemptHTTP2 is already true.
+func TestBuildTransport_NoProxySharesTunedTransport(t *testing.T) {
+	tr, err := buildTransport("")
+	if err != nil {
+		t.Fatalf("buildTransport(\"\"): %v", err)
+	}
+	if tr != http.RoundTripper(tunedTransport) {
+		t.Error("expected no-proxy path to return the shared tunedTransport")
+	}
+	if !tunedTransport.ForceAttemptHTTP2 {
+		t.Error("tunedTransport.ForceAttemptHTTP2 = false, want true")
+	}
+}

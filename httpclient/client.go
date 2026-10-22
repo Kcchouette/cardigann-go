@@ -88,11 +88,22 @@ func New(opts Options) (*IndexerClient, error) {
 // requests instead of relying on http.DefaultTransport's tight per-host limit.
 // Proxy: ProxyFromEnvironment preserves the default transport's env-var
 // behavior (HTTP(S)_PROXY), which a bare transport would silently drop.
+//
+// ForceAttemptHTTP2 is set unconditionally on purpose: Clone() first runs the
+// source transport's HTTP/2 auto-setup, so the copy inherits the source's
+// post-setup TLSClientConfig (which already advertises ALPN "h2") but NOT its
+// TLSNextProto map. Without the force, protocols() treats that inherited
+// TLSClientConfig as a custom TLS config, disables HTTP/2, and the client
+// then offers h2 via ALPN while reading the response as HTTP/1.1 — any
+// h2-speaking server breaks the request with "malformed HTTP response".
+// SOCKS5 also installs a custom DialContext, which disables HTTP/2 unless
+// forced. Same footgun as gowlarr's newznab cloneSharedTransport.
 var tunedTransport = &http.Transport{
 	Proxy:               http.ProxyFromEnvironment,
 	MaxIdleConns:        100,
 	MaxIdleConnsPerHost: 10,
 	IdleConnTimeout:     90 * time.Second,
+	ForceAttemptHTTP2:   true,
 }
 
 func buildTransport(proxyURL string) (http.RoundTripper, error) {
