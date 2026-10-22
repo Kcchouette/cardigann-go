@@ -17,11 +17,6 @@ jobs:
       fail-fast: false
       matrix:
         go-version: ['1.26.x', '1.27.x']
-    # Pas de GOTOOLCHAIN explicite : la valeur par défaut (auto) donne la
-    # sémantique voulue sur les deux legs — 1.26.x bascule sur le
-    # toolchain 1.27 exigé par go.mod, 1.27.x tourne en local. (Une
-    # expression job-level startsWith(...) && 'local' || 'auto' avait
-    # résolu 'local' sur le leg 1.26 et fait échouer le build.)
     steps:
       - uses: actions/checkout@v7
 
@@ -30,6 +25,13 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
           cache: true
+
+      # setup-go@v7 force GOTOOLCHAIN=local (no toolchain download). Re-enable
+      # auto so the 1.26.x leg can switch to the 1.27 toolchain go.mod
+      # requires — that consumer switch IS what the leg tests. On 1.27.x, auto
+      # still runs the installed local toolchain (it satisfies go.mod).
+      - name: Allow Go toolchain auto-switching
+        run: echo "GOTOOLCHAIN=auto" >> "$GITHUB_ENV"
 
       - name: Build
         run: go build ./...
