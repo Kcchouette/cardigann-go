@@ -142,6 +142,39 @@ func TestDateParse_GoLayoutStillWorks(t *testing.T) {
 	}
 }
 
+func TestUnixDate(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    string
+		wantErr bool
+	}{
+		{"epoch seconds", "1792340016", "2026-10-18T16:13:36Z", false},
+		{"surrounding spaces trimmed", "  1792340016\n", "2026-10-18T16:13:36Z", false},
+		{"pre-epoch negative", "-1", "1969-12-31T23:59:59Z", false},
+		{"empty rejected", "", "", true},
+		{"non-numeric rejected", "abc", "", true},
+		{"fractional rejected", "1.5", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Apply(tt.value, []Step{{Name: "unixdate"}})
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("unixdate(%q) = %q, want error", tt.value, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unixdate failed: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("unixdate(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidFilename(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -75,6 +75,7 @@ var Registry = map[string]FilterFunc{
 	"htmldecode":    htmlDecode,
 	"querystring":   queryString,
 	"dateparse":     dateParse,
+	"unixdate":      unixDate,
 	"jsonparse":     jsonParse,
 	"andmatch":      andMatch,
 	"timeago":       timeAgo,
@@ -314,6 +315,17 @@ func dateParse(v string, args []string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("dateparse: no layout matched %q", v)
+}
+
+// unixDate converts a Unix epoch-seconds value to RFC3339 UTC, the format
+// fieldsToRelease parses for the date field (epoch inputs otherwise fail
+// that parse silently and zero the release date).
+func unixDate(v string, _ []string) (string, error) {
+	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("unixdate: %w", err)
+	}
+	return time.Unix(n, 0).UTC().Format(time.RFC3339), nil
 }
 
 func jsonParse(v string, args []string) (string, error) {
