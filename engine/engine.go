@@ -34,6 +34,7 @@ type HTTPDoer interface {
 // Query represents a generic Cardigann search.
 type Query struct {
 	Keywords    string
+	Type        string // Newznab search type (search|tvsearch|movie|music|book); empty defaults to "search"
 	Categories  []int
 	IMDBID      string
 	IMDBIDShort string
@@ -191,12 +192,20 @@ func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, erro
 
 	// The render context must exist before the keyword filters run: their
 	// args reference .Config (e.g. torrentleech's exclude_archives).
+	// .Query.Type defaults to "search": definitions branch on it for the
+	// Newznab "t" parameter, and an absent key would silently drop "t"
+	// (filterInputs skips empty values), degrading tvsearch to no search.
+	searchType := q.Type
+	if searchType == "" {
+		searchType = "search"
+	}
 	rctx := tmpl.Context{
 		Config:   p.config,
 		Keywords: q.Keywords,
 		Query: map[string]string{
 			"Keywords":    q.Keywords,
 			"q":           q.Keywords,
+			"Type":        searchType,
 			"IMDBID":      q.IMDBID,
 			"IMDBIDShort": q.IMDBIDShort,
 			"TMDBID":      q.TMDBID,
