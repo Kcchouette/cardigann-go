@@ -287,8 +287,19 @@ func beforeSelectorsMatch(selectors []cmodel.DownloadSelector, body string) bool
 // search-time resolution, the chain — which may perform a side-effecting
 // action such as posting a "thanks" to unlock hidden content — runs only
 // here, when the user explicitly requests the links.
+//
+// Unlike search-time resolution (soft-fail so rows survive), this path is
+// strict when the definition actually needs a chain (before steps or
+// usebeforeresponse selectors): extracting neither a URL nor an infohash is
+// an error. A stored link that is already a magnet URI is returned unchanged
+// (no chain HTTP). An infohash with no URL is promoted to a bare magnet URI
+// (btih only). Row-only selectors never re-extract here (row is nil) and do
+// not force a chain.
 func (p *Provider) ResolveDownloadLink(ctx context.Context, rel release.Release) (release.Release, error) {
 	if p.def.Download == nil || rel.DownloadLink == "" {
+		return rel, nil
+	}
+	if strings.HasPrefix(rel.DownloadLink, "magnet:") {
 		return rel, nil
 	}
 	client, err := p.httpClient(ctx)
@@ -298,7 +309,8 @@ func (p *Provider) ResolveDownloadLink(ctx context.Context, rel release.Release)
 	rctx := tmpl.Context{Config: p.config}
 	// Absolutize the stored link against the effective base first: a stale
 	// absolute link on the pre-rotation origin must not seed the chain.
-	res, err := p.resolveDownload(ctx, client, nil, p.EffectiveBaseURL(), rctx, p.absolutizeHref(rel.DownloadLink))
+	stored := p.absolutizeHref(rel.DownloadLink)
+	res, err := p.resolveDownload(ctx, client, nil, p.EffectiveBaseURL(), rctx, stored)
 	if err != nil {
 		return rel, err
 	}
@@ -307,6 +319,8 @@ func (p *Provider) ResolveDownloadLink(ctx context.Context, rel release.Release)
 	}
 	if res.URL != "" {
 		rel.DownloadLink = res.URL
+	} else if res.InfoHash != "" {
+		rel.DownloadLink = "magnet:?xt=urn:btih:" + res.InfoHash
 	}
 	if res.InfoHash != "" {
 		rel.InfoHash = res.InfoHash
@@ -317,8 +331,29 @@ func (p *Provider) ResolveDownloadLink(ctx context.Context, rel release.Release)
 	if res.Unlocked {
 		rel.Unlocked = true
 	}
+	if downloadChainRequired(p.def.Download) && res.URL == "" && res.InfoHash == "" {
+		return rel, fmt.Errorf("download chain did not resolve a link from %q", stored)
+	}
 	rel.Hosts = DetectHosts(rel.DownloadLink)
 	return rel, nil
+}
+
+// downloadChainRequired reports whether a download-time resolve must produce
+// a new URL or infohash: definitions with before steps or usebeforeresponse
+// selectors. Row-only selectors never re-extract at download time (row is nil).
+func downloadChainRequired(dl *cmodel.Download) bool {
+	if dl == nil {
+		return false
+	}
+	if len(dl.Before) > 0 {
+		return true
+	}
+	for _, sel := range dl.Selectors {
+		if sel.UseBeforeResponse {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveBeforeURL computes the URL of a chain step. Step 0 resolves its
