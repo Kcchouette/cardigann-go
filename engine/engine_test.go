@@ -101,11 +101,11 @@ func TestProviderSearch_FullPipeline(t *testing.T) {
 	if first.Title != "Ubuntu.24.04.ISO" {
 		t.Errorf("expected title 'Ubuntu.24.04.ISO', got %q", first.Title)
 	}
-	if first.Details != "/details/1" {
-		t.Errorf("expected details '/details/1', got %q", first.Details)
+	if first.Details != server.URL+"/details/1" {
+		t.Errorf("expected details %q, got %q", server.URL+"/details/1", first.Details)
 	}
-	if first.DownloadLink != "/download/1.torrent" {
-		t.Errorf("expected download link '/download/1.torrent', got %q", first.DownloadLink)
+	if first.DownloadLink != server.URL+"/download/1.torrent" {
+		t.Errorf("expected download link %q, got %q", server.URL+"/download/1.torrent", first.DownloadLink)
 	}
 	if first.Size != 1048576 {
 		t.Errorf("expected size 1048576, got %d", first.Size)
@@ -924,8 +924,10 @@ search:
 	if len(releases) != 1 {
 		t.Fatalf("expected 1 release, got %d", len(releases))
 	}
-	if releases[0].Details != "mysite" {
-		t.Errorf("expected details 'mysite' from text field, got %q", releases[0].Details)
+	// Text-field details are resolved against the effective base like any
+	// other href (v0.7.0 absolutization).
+	if releases[0].Details != server.URL+"/mysite" {
+		t.Errorf("expected details %q from text field, got %q", server.URL+"/mysite", releases[0].Details)
 	}
 }
 
@@ -2190,7 +2192,7 @@ func TestSearch_EncodingKinozalFixture(t *testing.T) {
 	if !strings.Contains(releases[0].Title, "2024") {
 		t.Errorf("title lost the year: %q", releases[0].Title)
 	}
-	if want := "/download.php?id=1"; releases[0].DownloadLink != want {
+	if want := server.URL + "/download.php?id=1"; releases[0].DownloadLink != want {
 		t.Errorf("download link = %q, want %q", releases[0].DownloadLink, want)
 	}
 	// The before chain ran with DownloadUri seeded from the row's download
@@ -2249,8 +2251,8 @@ search:
 	if releases[0].Title != "Movie A" || releases[1].Title != "Movie B" {
 		t.Errorf("unexpected titles: %q, %q", releases[0].Title, releases[1].Title)
 	}
-	if releases[0].DownloadLink != "/dl/1" {
-		t.Errorf("download = %q, want /dl/1", releases[0].DownloadLink)
+	if releases[0].DownloadLink != server.URL+"/dl/1" {
+		t.Errorf("download = %q, want %q", releases[0].DownloadLink, server.URL+"/dl/1")
 	}
 }
 
@@ -2304,7 +2306,7 @@ search:
 	if len(releases) != 3 {
 		t.Fatalf("expected 3 releases (2+1 expanded), got %d", len(releases))
 	}
-	if releases[0].DownloadLink != "/t1" || releases[2].DownloadLink != "/t3" {
+	if releases[0].DownloadLink != server.URL+"/t1" || releases[2].DownloadLink != server.URL+"/t3" {
 		t.Errorf("unexpected download links: %q, %q", releases[0].DownloadLink, releases[2].DownloadLink)
 	}
 }

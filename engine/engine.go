@@ -50,9 +50,15 @@ type Query struct {
 // Provider executes a Cardigann IndexerDefinition as a search provider.
 type Provider struct {
 	def     cmodel.IndexerDefinition
-	baseURL string
+	baseURL string // configured base; immutable after construction
 	config  map[string]string
 	httpCl  *http.Client
+
+	// mu guards effectiveBase: the observed post-redirect origin (see
+	// effectivebase.go). Last-writer-wins across concurrent Search paths
+	// is benign — all paths of one rotation observe the same origin.
+	mu            sync.RWMutex
+	effectiveBase string
 
 	// client, if set, is used instead of httpCl: it provides persisted cookies
 	// (SQLite), rate limiting, and retries (Slice C). Login (if
@@ -84,10 +90,11 @@ func (p *Provider) Def() cmodel.IndexerDefinition { return p.def }
 // a rate limiter is created to space out requests.
 func NewProvider(def cmodel.IndexerDefinition, baseURL string, config map[string]string) *Provider {
 	p := &Provider{
-		def:     def,
-		baseURL: baseURL,
-		config:  config,
-		httpCl:  &http.Client{Timeout: 20 * time.Second},
+		def:           def,
+		baseURL:       baseURL,
+		effectiveBase: baseURL,
+		config:        config,
+		httpCl:        &http.Client{Timeout: 20 * time.Second},
 	}
 	if def.RequestDelay > 0 {
 		p.limiter = rate.NewLimiter(rate.Every(time.Duration(def.RequestDelay*float64(time.Second))), 1)
@@ -102,10 +109,11 @@ func NewProvider(def cmodel.IndexerDefinition, baseURL string, config map[string
 func NewAuthenticatedProvider(def cmodel.IndexerDefinition, baseURL string, config map[string]string, client *httpclient.IndexerClient) *Provider {
 	logWarnings(def)
 	return &Provider{
-		def:     def,
-		baseURL: baseURL,
-		config:  config,
-		client:  client,
+		def:           def,
+		baseURL:       baseURL,
+		effectiveBase: baseURL,
+		config:        config,
+		client:        client,
 	}
 }
 
@@ -170,9 +178,11 @@ func (e *loginError) Unwrap() error { return e.err }
 
 // Search executes the search for all search.paths in the definition.
 //
-// Safe for concurrent calls on the same *Provider instance: no shared mutable
-// state is modified after the first search (default config values are applied
-// only once via configOnce, and filtered keywords remain local to the call).
+// Safe for concurrent calls on the same *Provider instance: default config
+// values are applied only once via configOnce, filtered keywords remain
+// local to the call, and the only shared mutable state is effectiveBase
+// (mutex-guarded, last-writer-wins — benign: concurrent paths of one
+// rotation observe the same origin).
 func (p *Provider) Search(ctx context.Context, q Query) ([]release.Release, error) {
 	// Populate config with default values from definition if not already set
 	// Note: "false" is truthy in Go templates, so we exclude it from Config
@@ -390,7 +400,7 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 		return nil, fmt.Errorf("rendering path: %w", err)
 	}
 
-	fullURL := httputil.ResolveURL(p.baseURL, renderedPath)
+	fullURL := httputil.ResolveURL(p.EffectiveBaseURL(), renderedPath)
 
 	method := strings.ToUpper(path.Method)
 	if method == "" {
@@ -451,6 +461,7 @@ func (p *Provider) searchPath(ctx context.Context, path cmodel.SearchPath, rctx 
 	if err != nil {
 		return nil, fmt.Errorf("http request: %w", err)
 	}
+	p.observeFinalURL(resp.Request.URL)
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := httputil.ReadBodyLimited(resp, p.def.Encoding, 16<<20) // 16 MiB cap, decoded per encoding

@@ -53,8 +53,8 @@ func TestResolveDownload_SimpleSelectors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveDownload returned error: %v", err)
 	}
-	if result.URL != "/download/1.torrent" {
-		t.Errorf("expected '/download/1.torrent', got %q", result.URL)
+	if result.URL != server.URL+"/download/1.torrent" {
+		t.Errorf("expected %q, got %q", server.URL+"/download/1.torrent", result.URL)
 	}
 }
 
@@ -123,8 +123,8 @@ func TestResolveDownload_BeforePostPath(t *testing.T) {
 	if !intermediateServed {
 		t.Error("intermediate page was not fetched")
 	}
-	if result.URL != "/real/download.torrent" {
-		t.Errorf("expected '/real/download.torrent', got %q", result.URL)
+	if result.URL != server.URL+"/real/download.torrent" {
+		t.Errorf("expected %q, got %q", server.URL+"/real/download.torrent", result.URL)
 	}
 }
 
@@ -182,8 +182,8 @@ func TestResolveDownload_BeforePathSelector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveDownload returned error: %v", err)
 	}
-	if result.URL != "/dl/final.torrent" {
-		t.Errorf("expected '/dl/final.torrent', got %q", result.URL)
+	if result.URL != server.URL+"/dl/final.torrent" {
+		t.Errorf("expected %q, got %q", server.URL+"/dl/final.torrent", result.URL)
 	}
 }
 
@@ -242,8 +242,8 @@ func TestResolveDownload_Headers(t *testing.T) {
 	if receivedHeader != "secret123" {
 		t.Errorf("expected X-Custom-Token 'secret123', got %q", receivedHeader)
 	}
-	if result.URL != "/dl/file.torrent" {
-		t.Errorf("expected '/dl/file.torrent', got %q", result.URL)
+	if result.URL != server.URL+"/dl/file.torrent" {
+		t.Errorf("expected %q, got %q", server.URL+"/dl/file.torrent", result.URL)
 	}
 }
 
@@ -346,8 +346,8 @@ func TestResolveDownload_SelectorFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveDownload returned error: %v", err)
 	}
-	if result.URL != "/download/file.torrent" {
-		t.Errorf("expected '/download/file.torrent', got %q", result.URL)
+	if result.URL != server.URL+"/download/file.torrent" {
+		t.Errorf("expected %q, got %q", server.URL+"/download/file.torrent", result.URL)
 	}
 }
 
@@ -450,8 +450,8 @@ func TestResolveDownload_BeforeGetPath(t *testing.T) {
 	if !strings.Contains(receivedQuery, "token=abc") {
 		t.Errorf("expected query to contain 'token=abc', got %q", receivedQuery)
 	}
-	if result.URL != "/dl/get.torrent" {
-		t.Errorf("expected '/dl/get.torrent', got %q", result.URL)
+	if result.URL != server.URL+"/dl/get.torrent" {
+		t.Errorf("expected %q, got %q", server.URL+"/dl/get.torrent", result.URL)
 	}
 }
 
@@ -519,8 +519,8 @@ func TestExtractRelease_WithDownloadResolution(t *testing.T) {
 	if rel.Title != "Test Title" {
 		t.Errorf("expected title 'Test Title', got %q", rel.Title)
 	}
-	if rel.DownloadLink != "/resolved.torrent" {
-		t.Errorf("expected resolved download '/resolved.torrent', got %q", rel.DownloadLink)
+	if rel.DownloadLink != server.URL+"/resolved.torrent" {
+		t.Errorf("expected resolved download %q, got %q", server.URL+"/resolved.torrent", rel.DownloadLink)
 	}
 }
 
@@ -573,8 +573,8 @@ func TestExtractRelease_FallbackWhenResolveFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extractRelease returned error: %v", err)
 	}
-	if rel.DownloadLink != "/raw.torrent" {
-		t.Errorf("expected fallback download '/raw.torrent', got %q", rel.DownloadLink)
+	if rel.DownloadLink != server.URL+"/raw.torrent" {
+		t.Errorf("expected fallback download %q, got %q", server.URL+"/raw.torrent", rel.DownloadLink)
 	}
 }
 

@@ -185,7 +185,7 @@ func TestExtractRelease_ChainSoftFailKeepsRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extractRelease: %v", err)
 	}
-	if rel.DownloadLink != "/raw.torrent" {
+	if rel.DownloadLink != server.URL+"/raw.torrent" {
 		t.Errorf("expected raw row link kept after soft-fail, got %q", rel.DownloadLink)
 	}
 	if rel.Unlocked {
@@ -248,8 +248,8 @@ func TestResolveDownload_ChainPopulatesDownloadUri(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveDownload: %v", err)
 	}
-	if result.URL != "/unlocked.torrent" {
-		t.Errorf("expected '/unlocked.torrent', got %q", result.URL)
+	if result.URL != server.URL+"/unlocked.torrent" {
+		t.Errorf("expected %q, got %q", server.URL+"/unlocked.torrent", result.URL)
 	}
 	if !result.Unlocked {
 		t.Error("expected Unlocked=true for a chained resolution")
@@ -303,8 +303,8 @@ func TestResolveDownload_SelectorInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveDownload: %v", err)
 	}
-	if result.URL != "/final.torrent" {
-		t.Errorf("URL = %q, want /final.torrent", result.URL)
+	if result.URL != server.URL+"/final.torrent" {
+		t.Errorf("URL = %q, want %q", result.URL, server.URL+"/final.torrent")
 	}
 	if !strings.Contains(postedBody, "csrf=tok123") {
 		t.Errorf("POST body missing selector-extracted csrf: %q", postedBody)
@@ -359,8 +359,8 @@ func TestResolveDownload_OnlyIfLocked(t *testing.T) {
 	if posts != 0 {
 		t.Errorf("onlyiflocked step ran despite the link being present (%d posts)", posts)
 	}
-	if result.URL != "/direct.torrent" {
-		t.Errorf("URL = %q, want /direct.torrent (from step 0)", result.URL)
+	if result.URL != server.URL+"/direct.torrent" {
+		t.Errorf("URL = %q, want %q (from step 0)", result.URL, server.URL+"/direct.torrent")
 	}
 }
 
@@ -410,8 +410,8 @@ func TestResolveDownload_OnlyIfLockedRunsWhenHidden(t *testing.T) {
 	if posts != 1 {
 		t.Errorf("onlyiflocked step did not run while the content was hidden (%d posts)", posts)
 	}
-	if result.URL != "/unlocked.torrent" {
-		t.Errorf("URL = %q, want /unlocked.torrent", result.URL)
+	if result.URL != server.URL+"/unlocked.torrent" {
+		t.Errorf("URL = %q, want %q", result.URL, server.URL+"/unlocked.torrent")
 	}
 }
 
@@ -465,8 +465,8 @@ func TestResolveDownload_OnlyIfLockedRetriesOnFormError(t *testing.T) {
 	if posts != 2 {
 		t.Errorf("expected the unlock POST to be retried once, got %d posts", posts)
 	}
-	if result.URL != "/unlocked.torrent" {
-		t.Errorf("URL = %q, want /unlocked.torrent", result.URL)
+	if result.URL != server.URL+"/unlocked.torrent" {
+		t.Errorf("URL = %q, want %q", result.URL, server.URL+"/unlocked.torrent")
 	}
 }
 
@@ -520,8 +520,8 @@ func TestResolveDownload_OnlyIfLockedRetriesOnTransientError(t *testing.T) {
 	if posts != 2 {
 		t.Errorf("expected the unlock POST to be retried after the 5xx, got %d posts", posts)
 	}
-	if result.URL != "/unlocked.torrent" {
-		t.Errorf("URL = %q, want /unlocked.torrent", result.URL)
+	if result.URL != server.URL+"/unlocked.torrent" {
+		t.Errorf("URL = %q, want %q", result.URL, server.URL+"/unlocked.torrent")
 	}
 }
 
@@ -663,8 +663,9 @@ func TestSearch_SkipsSearchDownload(t *testing.T) {
 	if *topicGets != 0 || *thanksPosts != 0 {
 		t.Errorf("search must not run the download chain: topicGets=%d thanksPosts=%d", *topicGets, *thanksPosts)
 	}
-	// The raw row download link is kept (unresolved).
-	if releases[0].DownloadLink != "/viewtopic.php?f=1&t=7" {
+	// The raw row download link is kept (unresolved), absolutized against
+	// the effective base (v0.7.0).
+	if releases[0].DownloadLink != server.URL+"/viewtopic.php?f=1&t=7" {
 		t.Errorf("DownloadLink = %q, want the raw row link", releases[0].DownloadLink)
 	}
 	if releases[0].Unlocked {

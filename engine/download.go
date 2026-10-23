@@ -242,6 +242,10 @@ func (p *Provider) resolveDownload(ctx context.Context, client interface {
 		}
 	}
 
+	// Single absolutization point: covers selector-extracted URLs (possibly
+	// relative or on the pre-rotation origin) and the naked-URL fallback.
+	result.URL = p.absolutizeHref(result.URL)
+
 	return result, nil
 }
 
@@ -292,7 +296,9 @@ func (p *Provider) ResolveDownloadLink(ctx context.Context, rel release.Release)
 		return rel, err
 	}
 	rctx := tmpl.Context{Config: p.config}
-	res, err := p.resolveDownload(ctx, client, nil, p.baseURL, rctx, rel.DownloadLink)
+	// Absolutize the stored link against the effective base first: a stale
+	// absolute link on the pre-rotation origin must not seed the chain.
+	res, err := p.resolveDownload(ctx, client, nil, p.EffectiveBaseURL(), rctx, p.absolutizeHref(rel.DownloadLink))
 	if err != nil {
 		return rel, err
 	}
@@ -456,6 +462,7 @@ func (p *Provider) beforeRequest(ctx context.Context, client interface {
 	if err != nil {
 		return "", fmt.Errorf("before request: %w", err)
 	}
+	p.observeFinalURL(resp.Request.URL)
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := httputil.ReadBodyLimited(resp, p.def.Encoding, 16<<20)

@@ -298,6 +298,10 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 	if err != nil {
 		return release.Release{}, err
 	}
+	// fieldsToRelease emits raw (often root-relative) hrefs; absolutize
+	// against the effective base so a rotated domain is reflected now.
+	rel.Details = p.absolutizeHref(rel.Details)
+	rel.DownloadLink = p.absolutizeHref(rel.DownloadLink)
 
 	// Resolve download link via download block if defined (unless the
 	// provider opts out: some chains perform side-effecting actions such as
@@ -305,7 +309,7 @@ func (p *Provider) extractRelease(ctx context.Context, row selector.Node, rctx t
 	if p.def.Download != nil && !p.skipSearchDownload {
 		client, clientErr := p.httpClient(ctx)
 		if clientErr == nil {
-			dlResult, dlErr := p.resolveDownload(ctx, client, row, p.baseURL, rctx, "")
+			dlResult, dlErr := p.resolveDownload(ctx, client, row, p.EffectiveBaseURL(), rctx, "")
 			if dlErr == nil && dlResult != nil {
 				if dlResult.URL != "" {
 					rel.DownloadLink = dlResult.URL

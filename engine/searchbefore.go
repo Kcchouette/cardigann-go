@@ -82,7 +82,7 @@ func (p *Provider) runSearchBefore(ctx context.Context, rctx *tmpl.Context, step
 	if err != nil {
 		return false, fmt.Errorf("rendering before path: %w", err)
 	}
-	fullURL := httputil.ResolveURL(p.baseURL, renderedPath)
+	fullURL := httputil.ResolveURL(p.EffectiveBaseURL(), renderedPath)
 
 	method := strings.ToUpper(step.Method)
 	if method == "" {
@@ -131,6 +131,7 @@ func (p *Provider) runSearchBefore(ctx context.Context, rctx *tmpl.Context, step
 	if err != nil {
 		return false, &searchError{err: fmt.Errorf("before request: %w", err)}
 	}
+	p.observeFinalURL(resp.Request.URL)
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return false, &searchError{err: fmt.Errorf("before request %s returned status %d", req.URL.String(), resp.StatusCode)}
