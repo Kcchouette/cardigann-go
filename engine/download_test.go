@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	cmodel "github.com/Kcchouette/cardigann-go/definition"
+	"github.com/Kcchouette/cardigann-go/release"
 	"github.com/Kcchouette/cardigann-go/selector"
 	tmpl "github.com/Kcchouette/cardigann-go/template"
 )
@@ -596,5 +597,202 @@ func TestExtractSelectorField_TextTemplate(t *testing.T) {
 	}
 	if rendered != "https://example.com/download/42.torrent" {
 		t.Errorf("expected 'https://example.com/download/42.torrent', got %q", rendered)
+	}
+}
+
+// magnetFicheDef mirrors the vidlox/darkfox shape: before GET of the stored
+// fiche URL + usebeforeresponse magnet selector.
+func magnetFicheDef() cmodel.IndexerDefinition {
+	return cmodel.IndexerDefinition{
+		ID:       "magnetfiche",
+		Name:     "Magnet Fiche",
+		Language: "en",
+		Type:     "public",
+		Links:    []string{"http://example.invalid"},
+		Search: cmodel.Search{
+			Rows:   cmodel.Rows{Selector: "tr"},
+			Fields: map[string]cmodel.Field{},
+		},
+		Download: &cmodel.Download{
+			Before: cmodel.DownloadBeforeList{
+				{Path: "{{ .DownloadUri }}"},
+			},
+			Selectors: []cmodel.DownloadSelector{
+				{Selector: `a[href^="magnet:"]`, Attribute: "href", UseBeforeResponse: true},
+			},
+		},
+	}
+}
+
+func TestResolveDownloadLink_MagnetFiche(t *testing.T) {
+	var gets int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gets++
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprint(w, `<html><body>
+<a href="magnet:?xt=urn:btih:a0b1c2d3e4f5a0b1c2d3e4f5a0b1c2d3e4f5a0b1&tr=udp://t.example/announce">Magnet</a>
+</body></html>`)
+	}))
+	defer server.Close()
+
+	provider := NewProvider(magnetFicheDef(), server.URL, nil)
+	rel := release.Release{Title: "Demo", DownloadLink: server.URL + "/detail/1"}
+	resolved, err := provider.ResolveDownloadLink(context.Background(), rel)
+	if err != nil {
+		t.Fatalf("ResolveDownloadLink: %v", err)
+	}
+	if gets != 1 {
+		t.Errorf("expected 1 fiche GET, got %d", gets)
+	}
+	if !strings.HasPrefix(resolved.DownloadLink, "magnet:?xt=urn:btih:a0b1c2d3") {
+		t.Errorf("DownloadLink = %q, want magnet", resolved.DownloadLink)
+	}
+}
+
+func TestResolveDownloadLink_MagnetFiche_NoMagnet_Errors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprint(w, `<html><body><p>no magnet here</p></body></html>`)
+	}))
+	defer server.Close()
+
+	provider := NewProvider(magnetFicheDef(), server.URL, nil)
+	rel := release.Release{Title: "Demo", DownloadLink: server.URL + "/detail/1"}
+	_, err := provider.ResolveDownloadLink(context.Background(), rel)
+	if err == nil {
+		t.Fatal("expected error when chain extracts neither URL nor infohash")
+	}
+	// usebeforeresponse miss surfaces as "matched nothing"; a pure soft-fail
+	// with empty before body surfaces as "did not resolve". Both are strict.
+	if !strings.Contains(err.Error(), "matched nothing") && !strings.Contains(err.Error(), "did not resolve") {
+		t.Errorf("error = %v, want strict chain failure", err)
+	}
+}
+
+func TestResolveDownloadLink_AlreadyMagnet_NoHTTP(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected HTTP request to %s", r.URL)
+	}))
+	defer server.Close()
+
+	provider := NewProvider(magnetFicheDef(), server.URL, nil)
+	in := "magnet:?xt=urn:btih:a0b1c2d3e4f5a0b1c2d3e4f5a0b1c2d3e4f5a0b1"
+	rel := release.Release{Title: "Demo", DownloadLink: in}
+	resolved, err := provider.ResolveDownloadLink(context.Background(), rel)
+	if err != nil {
+		t.Fatalf("ResolveDownloadLink: %v", err)
+	}
+	if resolved.DownloadLink != in {
+		t.Errorf("DownloadLink = %q, want unchanged %q", resolved.DownloadLink, in)
+	}
+}
+
+func TestResolveDownloadLink_InfoHashOnly_SynthesizesMagnet(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		// Nested .hash: UseBeforeResponse Find lands on the outer node, then
+		// extractSelectorField Find's the same selector among its descendants.
+		_, _ = fmt.Fprint(w, `<html><body>
+<div class="hash"><span class="hash">deadbeefdeadbeefdeadbeefdeadbeefdeadbeef</span></div>
+</body></html>`)
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		ID:       "infohashonly",
+		Name:     "InfoHash Only",
+		Language: "en",
+		Type:     "public",
+		Links:    []string{"http://example.invalid"},
+		Search: cmodel.Search{
+			Rows:   cmodel.Rows{Selector: "tr"},
+			Fields: map[string]cmodel.Field{},
+		},
+		Download: &cmodel.Download{
+			Before: cmodel.DownloadBeforeList{{Path: "{{ .DownloadUri }}"}},
+			Infohash: &cmodel.DownloadInfohash{
+				UseBeforeResponse: true,
+				Hash: cmodel.SelectorField{
+					Selector: ".hash",
+				},
+			},
+		},
+	}
+	provider := NewProvider(def, server.URL, nil)
+	rel := release.Release{Title: "Demo", DownloadLink: server.URL + "/detail/1"}
+	resolved, err := provider.ResolveDownloadLink(context.Background(), rel)
+	if err != nil {
+		t.Fatalf("ResolveDownloadLink: %v", err)
+	}
+	want := "magnet:?xt=urn:btih:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	if resolved.DownloadLink != want {
+		t.Errorf("DownloadLink = %q, want %q", resolved.DownloadLink, want)
+	}
+	if resolved.InfoHash != "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" {
+		t.Errorf("InfoHash = %q", resolved.InfoHash)
+	}
+}
+
+func TestResolveDownloadLink_NoDownloadBlock_NoOp(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected HTTP request to %s", r.URL)
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		ID:       "noblock",
+		Name:     "No Block",
+		Language: "en",
+		Type:     "public",
+		Links:    []string{"http://example.invalid"},
+		Search: cmodel.Search{
+			Rows:   cmodel.Rows{Selector: "tr"},
+			Fields: map[string]cmodel.Field{},
+		},
+	}
+	provider := NewProvider(def, server.URL, nil)
+	rel := release.Release{Title: "Demo", DownloadLink: server.URL + "/file.torrent"}
+	resolved, err := provider.ResolveDownloadLink(context.Background(), rel)
+	if err != nil {
+		t.Fatalf("ResolveDownloadLink: %v", err)
+	}
+	if resolved.DownloadLink != rel.DownloadLink {
+		t.Errorf("DownloadLink = %q, want unchanged %q", resolved.DownloadLink, rel.DownloadLink)
+	}
+}
+
+func TestResolveDownloadLink_RowOnlySelectors_NoStrict(t *testing.T) {
+	// Download-time has no row: row-only selectors cannot re-extract, and the
+	// stored link must be kept without a strict error.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected HTTP request to %s", r.URL)
+	}))
+	defer server.Close()
+
+	def := cmodel.IndexerDefinition{
+		ID:       "rowonly",
+		Name:     "Row Only",
+		Language: "en",
+		Type:     "public",
+		Links:    []string{"http://example.invalid"},
+		Search: cmodel.Search{
+			Rows:   cmodel.Rows{Selector: "tr"},
+			Fields: map[string]cmodel.Field{},
+		},
+		Download: &cmodel.Download{
+			Selectors: []cmodel.DownloadSelector{
+				{Selector: "a.dl", Attribute: "href"},
+			},
+		},
+	}
+	provider := NewProvider(def, server.URL, nil)
+	stored := server.URL + "/file.torrent"
+	rel := release.Release{Title: "Demo", DownloadLink: stored}
+	resolved, err := provider.ResolveDownloadLink(context.Background(), rel)
+	if err != nil {
+		t.Fatalf("ResolveDownloadLink: %v", err)
+	}
+	if resolved.DownloadLink != stored {
+		t.Errorf("DownloadLink = %q, want stored %q", resolved.DownloadLink, stored)
 	}
 }
