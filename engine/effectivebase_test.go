@@ -207,6 +207,14 @@ func TestEffectiveBase_Path2StaysOnOldLastWriterWins(t *testing.T) {
 	}
 }
 
+func TestObserveFinalURL_ConfiguredPathPrefixPreserved(t *testing.T) {
+	p := NewProvider(rotationDef(), "http://old.test/subdir/", nil)
+	p.observeFinalURL(mustParse(t, "http://new.test/subdir/whatever"))
+	if eff := p.EffectiveBaseURL(); eff != "http://new.test/subdir/" {
+		t.Errorf("EffectiveBaseURL = %q, want configured path prefix preserved on new origin", eff)
+	}
+}
+
 func TestAbsolutizeHref_RewriteRules(t *testing.T) {
 	p := NewProvider(rotationDef(), "http://old.test/", nil)
 	p.observeFinalURL(mustParse(t, "http://new.test/whatever"))
